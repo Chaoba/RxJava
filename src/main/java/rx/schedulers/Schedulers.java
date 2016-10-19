@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,11 +16,15 @@
 package rx.schedulers;
 
 import rx.Scheduler;
-import rx.internal.schedulers.*;
+import rx.annotations.Experimental;
+import rx.internal.schedulers.ExecutorScheduler;
+import rx.internal.schedulers.GenericScheduledExecutorService;
+import rx.internal.schedulers.SchedulerLifecycle;
 import rx.internal.util.RxRingBuffer;
-import rx.plugins.RxJavaPlugins;
+import rx.plugins.*;
 
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Static factory methods for creating Schedulers.
@@ -31,48 +35,66 @@ public final class Schedulers {
     private final Scheduler ioScheduler;
     private final Scheduler newThreadScheduler;
 
-    private static final Schedulers INSTANCE = new Schedulers();
+    private static final AtomicReference<Schedulers> INSTANCE = new AtomicReference<Schedulers>();
+
+    private static Schedulers getInstance() {
+        for (;;) {
+            Schedulers current = INSTANCE.get();
+            if (current != null) {
+                return current;
+            }
+            current = new Schedulers();
+            if (INSTANCE.compareAndSet(null, current)) {
+                return current;
+            } else {
+                current.shutdownInstance();
+            }
+        }
+    }
 
     private Schedulers() {
-        Scheduler c = RxJavaPlugins.getInstance().getSchedulersHook().getComputationScheduler();
+        @SuppressWarnings("deprecation")
+        RxJavaSchedulersHook hook = RxJavaPlugins.getInstance().getSchedulersHook();
+
+        Scheduler c = hook.getComputationScheduler();
         if (c != null) {
             computationScheduler = c;
         } else {
-            computationScheduler = new EventLoopsScheduler();
+            computationScheduler = RxJavaSchedulersHook.createComputationScheduler();
         }
 
-        Scheduler io = RxJavaPlugins.getInstance().getSchedulersHook().getIOScheduler();
+        Scheduler io = hook.getIOScheduler();
         if (io != null) {
             ioScheduler = io;
         } else {
-            ioScheduler = new CachedThreadScheduler();
+            ioScheduler = RxJavaSchedulersHook.createIoScheduler();
         }
 
-        Scheduler nt = RxJavaPlugins.getInstance().getSchedulersHook().getNewThreadScheduler();
+        Scheduler nt = hook.getNewThreadScheduler();
         if (nt != null) {
             newThreadScheduler = nt;
         } else {
-            newThreadScheduler = NewThreadScheduler.instance();
+            newThreadScheduler = RxJavaSchedulersHook.createNewThreadScheduler();
         }
     }
 
     /**
      * Creates and returns a {@link Scheduler} that executes work immediately on the current thread.
-     * 
-     * @return an {@link ImmediateScheduler} instance
+     *
+     * @return a {@link Scheduler} that executes work immediately
      */
     public static Scheduler immediate() {
-        return ImmediateScheduler.instance();
+        return rx.internal.schedulers.ImmediateScheduler.INSTANCE;
     }
 
     /**
      * Creates and returns a {@link Scheduler} that queues work on the current thread to be executed after the
      * current work completes.
-     * 
-     * @return a {@link TrampolineScheduler} instance
+     *
+     * @return a {@link Scheduler} that queues work on the current thread
      */
     public static Scheduler trampoline() {
-        return TrampolineScheduler.instance();
+        return rx.internal.schedulers.TrampolineScheduler.INSTANCE;
     }
 
     /**
@@ -80,10 +102,10 @@ public final class Schedulers {
      * <p>
      * Unhandled errors will be delivered to the scheduler Thread's {@link java.lang.Thread.UncaughtExceptionHandler}.
      *
-     * @return a {@link NewThreadScheduler} instance
+     * @return a {@link Scheduler} that creates new threads
      */
     public static Scheduler newThread() {
-        return INSTANCE.newThreadScheduler;
+        return RxJavaHooks.onNewThreadScheduler(getInstance().newThreadScheduler);
     }
 
     /**
@@ -98,7 +120,7 @@ public final class Schedulers {
      * @return a {@link Scheduler} meant for computation-bound work
      */
     public static Scheduler computation() {
-        return INSTANCE.computationScheduler;
+        return RxJavaHooks.onComputationScheduler(getInstance().computationScheduler);
     }
 
     /**
@@ -115,7 +137,7 @@ public final class Schedulers {
      * @return a {@link Scheduler} meant for IO-bound work
      */
     public static Scheduler io() {
-        return INSTANCE.ioScheduler;
+        return RxJavaHooks.onIOScheduler(getInstance().ioScheduler);
     }
 
     /**
@@ -124,7 +146,7 @@ public final class Schedulers {
      *
      * @return a {@code TestScheduler} meant for debugging
      */
-    public static TestScheduler test() {
+    public static TestScheduler test() { // NOPMD
         return new TestScheduler();
     }
 
@@ -138,52 +160,81 @@ public final class Schedulers {
     public static Scheduler from(Executor executor) {
         return new ExecutorScheduler(executor);
     }
-    
+
+    /**
+     * Resets the current {@link Schedulers} instance.
+     * This will re-init the cached schedulers on the next usage,
+     * which can be useful in testing.
+     */
+    @Experimental
+    public static void reset() {
+        Schedulers s = INSTANCE.getAndSet(null);
+        if (s != null) {
+            s.shutdownInstance();
+        }
+    }
+
     /**
      * Starts those standard Schedulers which support the SchedulerLifecycle interface.
-     * <p>The operation is idempotent and threadsafe.
+     * <p>The operation is idempotent and thread-safe.
      */
-    /* public testonly */ static void start() {
-        Schedulers s = INSTANCE;
+    public static void start() {
+        Schedulers s = getInstance();
+
+        s.startInstance();
+
         synchronized (s) {
-            if (s.computationScheduler instanceof SchedulerLifecycle) {
-                ((SchedulerLifecycle) s.computationScheduler).start();
-            }
-            if (s.ioScheduler instanceof SchedulerLifecycle) {
-                ((SchedulerLifecycle) s.ioScheduler).start();
-            }
-            if (s.newThreadScheduler instanceof SchedulerLifecycle) {
-                ((SchedulerLifecycle) s.newThreadScheduler).start();
-            }
             GenericScheduledExecutorService.INSTANCE.start();
-            
+
             RxRingBuffer.SPSC_POOL.start();
-            
+
             RxRingBuffer.SPMC_POOL.start();
         }
     }
     /**
      * Shuts down those standard Schedulers which support the SchedulerLifecycle interface.
-     * <p>The operation is idempotent and threadsafe.
+     * <p>The operation is idempotent and thread-safe.
      */
     public static void shutdown() {
-        Schedulers s = INSTANCE;
+        Schedulers s = getInstance();
+        s.shutdownInstance();
+
         synchronized (s) {
-            if (s.computationScheduler instanceof SchedulerLifecycle) {
-                ((SchedulerLifecycle) s.computationScheduler).shutdown();
-            }
-            if (s.ioScheduler instanceof SchedulerLifecycle) {
-                ((SchedulerLifecycle) s.ioScheduler).shutdown();
-            }
-            if (s.newThreadScheduler instanceof SchedulerLifecycle) {
-                ((SchedulerLifecycle) s.newThreadScheduler).shutdown();
-            }
-            
             GenericScheduledExecutorService.INSTANCE.shutdown();
-            
+
             RxRingBuffer.SPSC_POOL.shutdown();
-            
+
             RxRingBuffer.SPMC_POOL.shutdown();
+        }
+    }
+
+    /**
+     * Start the instance-specific schedulers.
+     */
+    synchronized void startInstance() { // NOPMD
+        if (computationScheduler instanceof SchedulerLifecycle) {
+            ((SchedulerLifecycle) computationScheduler).start();
+        }
+        if (ioScheduler instanceof SchedulerLifecycle) {
+            ((SchedulerLifecycle) ioScheduler).start();
+        }
+        if (newThreadScheduler instanceof SchedulerLifecycle) {
+            ((SchedulerLifecycle) newThreadScheduler).start();
+        }
+    }
+
+    /**
+     * Start the instance-specific schedulers.
+     */
+    synchronized void shutdownInstance() { // NOPMD
+        if (computationScheduler instanceof SchedulerLifecycle) {
+            ((SchedulerLifecycle) computationScheduler).shutdown();
+        }
+        if (ioScheduler instanceof SchedulerLifecycle) {
+            ((SchedulerLifecycle) ioScheduler).shutdown();
+        }
+        if (newThreadScheduler instanceof SchedulerLifecycle) {
+            ((SchedulerLifecycle) newThreadScheduler).shutdown();
         }
     }
 }

@@ -1,21 +1,46 @@
+/**
+ * Copyright 2016 Netflix, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"); you may not
+ * use this file except in compliance with the License. You may obtain a copy of
+ * the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations under
+ * the License.
+ */
+
 package rx.internal.operators;
 
-import rx.Single;
-import rx.SingleSubscriber;
+import java.util.NoSuchElementException;
+import java.util.concurrent.atomic.*;
+
+import rx.*;
 import rx.exceptions.Exceptions;
 import rx.functions.FuncN;
-import rx.plugins.RxJavaPlugins;
+import rx.plugins.RxJavaHooks;
 import rx.subscriptions.CompositeSubscription;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
+public final class SingleOperatorZip {
 
-public class SingleOperatorZip {
+    /** Utility class. */
+    private SingleOperatorZip() {
+        throw new IllegalStateException("No instances!");
+    }
 
     public static <T, R> Single<R> zip(final Single<? extends T>[] singles, final FuncN<? extends R> zipper) {
         return Single.create(new Single.OnSubscribe<R>() {
             @Override
             public void call(final SingleSubscriber<? super R> subscriber) {
+                if (singles.length == 0) {
+                    subscriber.onError(new NoSuchElementException("Can't zip 0 Singles."));
+                    return;
+                }
+
                 final AtomicInteger wip = new AtomicInteger(singles.length);
                 final AtomicBoolean once = new AtomicBoolean();
                 final Object[] values = new Object[singles.length];
@@ -53,7 +78,7 @@ public class SingleOperatorZip {
                             if (once.compareAndSet(false, true)) {
                                 subscriber.onError(error);
                             } else {
-                                RxJavaPlugins.getInstance().getErrorHandler().handleError(error);
+                                RxJavaHooks.onError(error);
                             }
                         }
                     };

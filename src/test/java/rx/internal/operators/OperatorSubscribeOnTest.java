@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -35,7 +35,6 @@ import rx.Scheduler;
 import rx.Subscriber;
 import rx.Subscription;
 import rx.functions.Action0;
-import rx.observers.TestObserver;
 import rx.observers.TestSubscriber;
 import rx.schedulers.Schedulers;
 
@@ -48,7 +47,7 @@ public class OperatorSubscribeOnTest {
         final CountDownLatch latch = new CountDownLatch(1);
         final CountDownLatch doneLatch = new CountDownLatch(1);
 
-        TestObserver<Integer> observer = new TestObserver<Integer>();
+        TestSubscriber<Integer> observer = new TestSubscriber<Integer>();
 
         final Subscription subscription = Observable
                 .create(new Observable.OnSubscribe<Integer>() {
@@ -80,7 +79,7 @@ public class OperatorSubscribeOnTest {
         latch.countDown();
         doneLatch.await();
         assertEquals(0, observer.getOnErrorEvents().size());
-        assertEquals(1, observer.getOnCompletedEvents().size());
+        assertEquals(1, observer.getCompletions());
     }
 
     @Test
@@ -133,7 +132,7 @@ public class OperatorSubscribeOnTest {
             return new SlowInner(actual.createWorker());
         }
 
-        private final class SlowInner extends Worker {
+        final class SlowInner extends Worker {
 
             private final Scheduler.Worker actualInner;
 

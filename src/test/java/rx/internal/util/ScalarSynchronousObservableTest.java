@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -16,12 +16,16 @@
 
 package rx.internal.util;
 
-import org.junit.Test;
+import java.util.concurrent.atomic.*;
 
-import rx.Observable;
+import org.junit.*;
+
+import rx.*;
+import rx.Observable.OnSubscribe;
 import rx.exceptions.TestException;
 import rx.functions.Func1;
 import rx.observers.TestSubscriber;
+import rx.plugins.*;
 import rx.schedulers.Schedulers;
 
 public class ScalarSynchronousObservableTest {
@@ -230,4 +234,69 @@ public class ScalarSynchronousObservableTest {
         ts.assertError(TestException.class);
         ts.assertNotCompleted();
     }
+
+    @SuppressWarnings("rawtypes")
+    @Test
+    public void hookCalled() {
+        Func1<OnSubscribe, OnSubscribe> save = RxJavaHooks.getOnObservableCreate();
+        try {
+            final AtomicInteger c = new AtomicInteger();
+
+
+            RxJavaHooks.setOnObservableCreate(new Func1<OnSubscribe, OnSubscribe>() {
+                @Override
+                public OnSubscribe call(OnSubscribe t) {
+                    c.getAndIncrement();
+                    return t;
+                }
+            });
+
+            int n = 10;
+
+            for (int i = 0; i < n; i++) {
+                Observable.just(1).subscribe();
+            }
+
+            Assert.assertEquals(n, c.get());
+        } finally {
+            RxJavaHooks.setOnObservableCreate(save);
+        }
+    }
+
+    @SuppressWarnings("rawtypes")
+    @Test
+    public void hookChangesBehavior() {
+        Func1<OnSubscribe, OnSubscribe> save = RxJavaHooks.getOnObservableCreate();
+        try {
+            RxJavaHooks.setOnObservableCreate(new Func1<OnSubscribe, OnSubscribe>() {
+                @Override
+                public OnSubscribe call(OnSubscribe f) {
+                    if (f instanceof ScalarSynchronousObservable.JustOnSubscribe) {
+                        final Object v = ((ScalarSynchronousObservable.JustOnSubscribe) f).value;
+                        return new OnSubscribe<Object>() {
+                            @Override
+                            public void call(Subscriber<? super Object> t) {
+                                t.onNext(v);
+                                t.onNext(v);
+                                t.onCompleted();
+                            }
+                        };
+                    }
+                    return f;
+                }
+            });
+
+            TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+
+            Observable.just(1).subscribe(ts);
+
+            ts.assertValues(1, 1);
+            ts.assertNoErrors();
+            ts.assertCompleted();
+
+        } finally {
+            RxJavaHooks.setOnObservableCreate(save);
+        }
+    }
+
 }

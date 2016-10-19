@@ -10,7 +10,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- * 
+ *
  * Original License: https://github.com/JCTools/JCTools/blob/master/LICENSE
  * Original location: https://github.com/JCTools/JCTools/blob/master/jctools-core/src/main/java/org/jctools/queues/atomic/SpscUnboundedAtomicArrayQueue.java
  */
@@ -28,28 +28,25 @@ import rx.internal.util.unsafe.Pow2;
  * structure if the production overshoots the consumption.
  * <p>Note that the minimum capacity of the 'islands' are 8 due to how the look-ahead optimization works.
  * <p>The implementation uses field updaters and thus should be platform-safe.
+ * @param <T> the value type held by this queue
  */
 public final class SpscUnboundedAtomicArrayQueue<T> implements Queue<T> {
     static final int MAX_LOOK_AHEAD_STEP = Integer.getInteger("jctools.spsc.max.lookahead.step", 4096);
-    protected volatile long producerIndex;
-    @SuppressWarnings("rawtypes")
-    static final AtomicLongFieldUpdater<SpscUnboundedAtomicArrayQueue> PRODUCER_INDEX =
-            AtomicLongFieldUpdater.newUpdater(SpscUnboundedAtomicArrayQueue.class, "producerIndex");
-    protected int producerLookAheadStep;
-    protected long producerLookAhead;
-    protected int producerMask;
-    protected AtomicReferenceArray<Object> producerBuffer;
-    protected int consumerMask;
-    protected AtomicReferenceArray<Object> consumerBuffer;
-    protected volatile long consumerIndex;
-    @SuppressWarnings("rawtypes")
-    static final AtomicLongFieldUpdater<SpscUnboundedAtomicArrayQueue> CONSUMER_INDEX =
-            AtomicLongFieldUpdater.newUpdater(SpscUnboundedAtomicArrayQueue.class, "consumerIndex");
+    final AtomicLong producerIndex;
+    int producerLookAheadStep;
+    long producerLookAhead;
+    int producerMask;
+    AtomicReferenceArray<Object> producerBuffer;
+    int consumerMask;
+    AtomicReferenceArray<Object> consumerBuffer;
+    final AtomicLong consumerIndex;
     private static final Object HAS_NEXT = new Object();
 
     public SpscUnboundedAtomicArrayQueue(final int bufferSize) {
         int p2capacity = Pow2.roundToPowerOfTwo(Math.max(8, bufferSize)); // lookahead doesn't work with capacity < 8
         int mask = p2capacity - 1;
+        this.producerIndex = new AtomicLong();
+        this.consumerIndex = new AtomicLong();
         AtomicReferenceArray<Object> buffer = new AtomicReferenceArray<Object>(p2capacity + 1);
         producerBuffer = buffer;
         producerMask = mask;
@@ -66,7 +63,7 @@ public final class SpscUnboundedAtomicArrayQueue<T> implements Queue<T> {
      * This implementation is correct for single producer thread use only.
      */
     @Override
-    public final boolean offer(final T e) {
+    public boolean offer(final T e) {
         if (e == null) {
             throw new NullPointerException();
         }
@@ -126,7 +123,7 @@ public final class SpscUnboundedAtomicArrayQueue<T> implements Queue<T> {
      */
     @SuppressWarnings("unchecked")
     @Override
-    public final T poll() {
+    public T poll() {
         // local load of field to avoid repeated loads after volatile reads
         final AtomicReferenceArray<Object> buffer = consumerBuffer;
         final long index = lpConsumerIndex();
@@ -166,7 +163,7 @@ public final class SpscUnboundedAtomicArrayQueue<T> implements Queue<T> {
      */
     @SuppressWarnings("unchecked")
     @Override
-    public final T peek() {
+    public T peek() {
         final AtomicReferenceArray<Object> buffer = consumerBuffer;
         final long index = lpConsumerIndex();
         final int mask = consumerMask;
@@ -178,10 +175,10 @@ public final class SpscUnboundedAtomicArrayQueue<T> implements Queue<T> {
 
         return (T) e;
     }
-    
+
     @Override
     public void clear() {
-        while (poll() != null || !isEmpty());
+        while (poll() != null || !isEmpty()); // NOPMD
     }
 
     @SuppressWarnings("unchecked")
@@ -192,7 +189,7 @@ public final class SpscUnboundedAtomicArrayQueue<T> implements Queue<T> {
     }
 
     @Override
-    public final int size() {
+    public int size() {
         /*
          * It is possible for a thread to be interrupted or reschedule between the read of the producer and
          * consumer indices, therefore protection is required to ensure size is within valid range. In the
@@ -209,7 +206,7 @@ public final class SpscUnboundedAtomicArrayQueue<T> implements Queue<T> {
             }
         }
     }
-    
+
     @Override
     public boolean isEmpty() {
         return lvProducerIndex() == lvConsumerIndex();
@@ -220,27 +217,27 @@ public final class SpscUnboundedAtomicArrayQueue<T> implements Queue<T> {
     }
 
     private long lvProducerIndex() {
-        return producerIndex;
+        return producerIndex.get();
     }
 
     private long lvConsumerIndex() {
-        return consumerIndex;
+        return consumerIndex.get();
     }
 
     private long lpProducerIndex() {
-        return producerIndex;
+        return producerIndex.get();
     }
 
     private long lpConsumerIndex() {
-        return consumerIndex;
+        return consumerIndex.get();
     }
 
     private void soProducerIndex(long v) {
-        PRODUCER_INDEX.lazySet(this, v);
+        producerIndex.lazySet(v);
     }
 
     private void soConsumerIndex(long v) {
-        CONSUMER_INDEX.lazySet(this, v);
+        consumerIndex.lazySet(v);
     }
 
     private static int calcWrappedOffset(long index, int mask) {
@@ -258,7 +255,7 @@ public final class SpscUnboundedAtomicArrayQueue<T> implements Queue<T> {
     }
 
     @Override
-    public final Iterator<T> iterator() {
+    public Iterator<T> iterator() {
         throw new UnsupportedOperationException();
     }
 

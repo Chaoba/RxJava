@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,24 +15,22 @@
  */
 package rx.exceptions;
 
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.Assert.*;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Test;
 
-import rx.Single;
-import rx.SingleSubscriber;
-import rx.Subscriber;
-import rx.Observable;
-import rx.Observer;
-import rx.functions.Action1;
-import rx.functions.Func1;
+import rx.*;
+import rx.functions.*;
 import rx.observables.GroupedObservable;
 import rx.subjects.PublishSubject;
 
 public class ExceptionsTest {
+    @Test
+    public void constructorShouldBePrivate() {
+        TestUtil.checkUtilityClass(Exceptions.class);
+    }
 
     @Test(expected = OnErrorNotImplementedException.class)
     public void testOnErrorNotImplementedIsThrown() {
@@ -46,13 +44,35 @@ public class ExceptionsTest {
         });
     }
 
+    /**
+     * https://github.com/ReactiveX/RxJava/issues/3885
+     */
+    @Test(expected = OnCompletedFailedException.class)
+    public void testOnCompletedExceptionIsThrown() {
+        Observable.empty()
+            .subscribe(new Subscriber<Object>() {
+                @Override
+                public void onCompleted() {
+                    throw new RuntimeException();
+                }
+
+                @Override
+                public void onError(Throwable e) {
+                }
+
+                @Override
+                public void onNext(Object o) {
+                }
+            });
+    }
+
     @Test
     public void testStackOverflowWouldOccur() {
         final PublishSubject<Integer> a = PublishSubject.create();
         final PublishSubject<Integer> b = PublishSubject.create();
         final int MAX_STACK_DEPTH = 800;
         final AtomicInteger depth = new AtomicInteger();
-        
+
         a.subscribe(new Observer<Integer>() {
 
             @Override
@@ -84,7 +104,7 @@ public class ExceptionsTest {
 
             @Override
             public void onNext(Integer n) {
-                if (depth.get() < MAX_STACK_DEPTH) { 
+                if (depth.get() < MAX_STACK_DEPTH) {
                     depth.set(Thread.currentThread().getStackTrace().length);
                     a.onNext(n + 1);
                 }
@@ -93,7 +113,7 @@ public class ExceptionsTest {
         a.onNext(1);
         assertTrue(depth.get() > MAX_STACK_DEPTH);
     }
-    
+
     @Test(expected = StackOverflowError.class)
     public void testStackOverflowErrorIsThrown() {
         Observable.just(1).subscribe(new Observer<Integer>() {
@@ -170,6 +190,7 @@ public class ExceptionsTest {
 
     /**
      * https://github.com/ReactiveX/RxJava/issues/2998
+     * @throws Exception on arbitrary errors
      */
     @Test(expected = OnErrorFailedException.class)
     public void testOnErrorExceptionIsThrownFromGroupBy() throws Exception {
@@ -201,6 +222,7 @@ public class ExceptionsTest {
 
     /**
      * https://github.com/ReactiveX/RxJava/issues/2998
+     * @throws Exception on arbitrary errors
      */
     @Test(expected = OnErrorFailedException.class)
     public void testOnErrorExceptionIsThrownFromOnNext() throws Exception {

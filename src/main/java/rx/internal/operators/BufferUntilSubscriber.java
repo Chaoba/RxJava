@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -18,8 +18,7 @@ package rx.internal.operators;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicReference;
 
-import rx.Observer;
-import rx.Subscriber;
+import rx.*;
 import rx.functions.Action0;
 import rx.subjects.Subject;
 import rx.subscriptions.Subscriptions;
@@ -48,10 +47,14 @@ import rx.subscriptions.Subscriptions;
  *            the type of the items to be buffered
  */
 public final class BufferUntilSubscriber<T> extends Subject<T, T> {
+    final State<T> state;
+
+    private boolean forward;
 
     /**
-     * @warn create() undescribed
-     * @return
+     * Creates a default, unbounded buffering Subject instance.
+     * @param <T> the value type
+     * @return the instance
      */
     public static <T> BufferUntilSubscriber<T> create() {
         State<T> state = new State<T>();
@@ -60,18 +63,20 @@ public final class BufferUntilSubscriber<T> extends Subject<T, T> {
 
     /** The common state. */
     static final class State<T> extends AtomicReference<Observer<? super T>> {
-        boolean casObserverRef(Observer<? super T>  expected, Observer<? super T>  next) {
-            return compareAndSet(expected, next);
-        }
+        /** */
+        private static final long serialVersionUID = 8026705089538090368L;
 
         final Object guard = new Object();
         /* protected by guard */
-        boolean emitting = false;
+        boolean emitting;
 
         final ConcurrentLinkedQueue<Object> buffer = new ConcurrentLinkedQueue<Object>();
-        final NotificationLite<T> nl = NotificationLite.instance();
+
+        boolean casObserverRef(Observer<? super T>  expected, Observer<? super T>  next) {
+            return compareAndSet(expected, next);
+        }
     }
-    
+
     static final class OnSubscribeAction<T> implements OnSubscribe<T> {
         final State<T> state;
 
@@ -97,11 +102,10 @@ public final class BufferUntilSubscriber<T> extends Subject<T, T> {
                     }
                 }
                 if (win) {
-                    final NotificationLite<T> nl = NotificationLite.instance();
                     while(true) {
                         Object o;
                         while ((o = state.buffer.poll()) != null) {
-                            nl.accept(state.get(), o);
+                            NotificationLite.accept(state.get(), o);
                         }
                         synchronized (state.guard) {
                             if (state.buffer.isEmpty()) {
@@ -118,11 +122,8 @@ public final class BufferUntilSubscriber<T> extends Subject<T, T> {
                 s.onError(new IllegalStateException("Only one subscriber allowed!"));
             }
         }
-        
-    }
-    final State<T> state;
 
-    private boolean forward = false;
+    }
 
     private BufferUntilSubscriber(State<T> state) {
         super(new OnSubscribeAction<T>(state));
@@ -142,7 +143,7 @@ public final class BufferUntilSubscriber<T> extends Subject<T, T> {
         if (forward) {
             Object o;
             while ((o = state.buffer.poll()) != null) {
-                state.nl.accept(state.get(), o);
+                NotificationLite.accept(state.get(), o);
             }
             // Because `emit(Object v)` will be called in sequence,
             // no event will be put into `buffer` after we drain it.
@@ -155,7 +156,7 @@ public final class BufferUntilSubscriber<T> extends Subject<T, T> {
             state.get().onCompleted();
         }
         else {
-            emit(state.nl.completed());
+            emit(NotificationLite.completed());
         }
     }
 
@@ -165,7 +166,7 @@ public final class BufferUntilSubscriber<T> extends Subject<T, T> {
             state.get().onError(e);
         }
         else {
-            emit(state.nl.error(e));
+            emit(NotificationLite.error(e));
         }
     }
 
@@ -175,7 +176,7 @@ public final class BufferUntilSubscriber<T> extends Subject<T, T> {
             state.get().onNext(t);
         }
         else {
-            emit(state.nl.next(t));
+            emit(NotificationLite.next(t));
         }
     }
 
@@ -191,19 +192,19 @@ public final class BufferUntilSubscriber<T> extends Subject<T, T> {
 
         @Override
         public void onCompleted() {
-            
+            // deliberately no op
         }
 
         @Override
         public void onError(Throwable e) {
-            
+            // deliberately no op
         }
 
         @Override
         public void onNext(Object t) {
-            
+            // deliberately no op
         }
-        
+
     };
-    
+
 }

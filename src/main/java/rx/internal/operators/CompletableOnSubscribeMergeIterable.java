@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -20,44 +20,45 @@ import java.util.Iterator;
 import java.util.concurrent.atomic.*;
 
 import rx.*;
-import rx.Completable.*;
-import rx.plugins.RxJavaPlugins;
+import rx.Completable.OnSubscribe;
+import rx.plugins.RxJavaHooks;
 import rx.subscriptions.CompositeSubscription;
 
-public final class CompletableOnSubscribeMergeIterable implements CompletableOnSubscribe {
+public final class CompletableOnSubscribeMergeIterable implements OnSubscribe {
     final Iterable<? extends Completable> sources;
-    
+
     public CompletableOnSubscribeMergeIterable(Iterable<? extends Completable> sources) {
         this.sources = sources;
     }
-    
+
     @Override
     public void call(final CompletableSubscriber s) {
         final CompositeSubscription set = new CompositeSubscription();
-        final AtomicInteger wip = new AtomicInteger(1);
-        final AtomicBoolean once = new AtomicBoolean();
-        
+
         s.onSubscribe(set);
-        
+
         Iterator<? extends Completable> iterator;
-        
+
         try {
             iterator = sources.iterator();
         } catch (Throwable e) {
             s.onError(e);
             return;
         }
-        
+
         if (iterator == null) {
             s.onError(new NullPointerException("The source iterator returned is null"));
             return;
         }
-        
+
+        final AtomicInteger wip = new AtomicInteger(1);
+        final AtomicBoolean once = new AtomicBoolean();
+
         for (;;) {
             if (set.isUnsubscribed()) {
                 return;
             }
-            
+
             boolean b;
             try {
                 b = iterator.hasNext();
@@ -66,21 +67,21 @@ public final class CompletableOnSubscribeMergeIterable implements CompletableOnS
                 if (once.compareAndSet(false, true)) {
                     s.onError(e);
                 } else {
-                    RxJavaPlugins.getInstance().getErrorHandler().handleError(e);
+                    RxJavaHooks.onError(e);
                 }
                 return;
             }
-                    
+
             if (!b) {
                 break;
             }
-            
+
             if (set.isUnsubscribed()) {
                 return;
             }
-            
+
             Completable c;
-            
+
             try {
                 c = iterator.next();
             } catch (Throwable e) {
@@ -88,29 +89,29 @@ public final class CompletableOnSubscribeMergeIterable implements CompletableOnS
                 if (once.compareAndSet(false, true)) {
                     s.onError(e);
                 } else {
-                    RxJavaPlugins.getInstance().getErrorHandler().handleError(e);
+                    RxJavaHooks.onError(e);
                 }
                 return;
             }
-            
+
             if (set.isUnsubscribed()) {
                 return;
             }
-            
+
             if (c == null) {
                 set.unsubscribe();
                 NullPointerException npe = new NullPointerException("A completable source is null");
                 if (once.compareAndSet(false, true)) {
                     s.onError(npe);
                 } else {
-                    RxJavaPlugins.getInstance().getErrorHandler().handleError(npe);
+                    RxJavaHooks.onError(npe);
                 }
                 return;
             }
-            
+
             wip.getAndIncrement();
-            
-            c.subscribe(new CompletableSubscriber() {
+
+            c.unsafeSubscribe(new CompletableSubscriber() {
                 @Override
                 public void onSubscribe(Subscription d) {
                     set.add(d);
@@ -122,7 +123,7 @@ public final class CompletableOnSubscribeMergeIterable implements CompletableOnS
                     if (once.compareAndSet(false, true)) {
                         s.onError(e);
                     } else {
-                        RxJavaPlugins.getInstance().getErrorHandler().handleError(e);
+                        RxJavaHooks.onError(e);
                     }
                 }
 
@@ -134,10 +135,10 @@ public final class CompletableOnSubscribeMergeIterable implements CompletableOnS
                         }
                     }
                 }
-                
+
             });
         }
-        
+
         if (wip.decrementAndGet() == 0) {
             if (once.compareAndSet(false, true)) {
                 s.onCompleted();

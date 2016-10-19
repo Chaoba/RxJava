@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,44 +15,22 @@
  */
 package rx.internal.operators;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyString;
-import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
+import static org.junit.Assert.*;
+import static org.mockito.Matchers.*;
+import static org.mockito.Mockito.*;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Iterator;
-import java.util.List;
-import java.util.NoSuchElementException;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import java.util.*;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import junit.framework.Assert;
-
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 import org.mockito.InOrder;
 
-import rx.Notification;
+import rx.*;
 import rx.Observable;
 import rx.Observable.OnSubscribe;
 import rx.Observer;
-import rx.Subscriber;
-import rx.Subscription;
-import rx.functions.Action1;
-import rx.functions.Func2;
-import rx.functions.Func3;
-import rx.functions.FuncN;
-import rx.functions.Functions;
+import rx.functions.*;
 import rx.internal.util.RxRingBuffer;
 import rx.observers.TestSubscriber;
 import rx.schedulers.Schedulers;
@@ -998,6 +976,71 @@ public class OperatorZipTest {
         ts.assertReceivedOnNext(Collections.emptyList());
     }
 
+    @Test
+    public void testZipEmptyArray() {
+        @SuppressWarnings("unchecked")
+        Observable<Integer>[] ws = new Observable[0];
+        Observable<Integer> o = Observable.zip(ws, new FuncN<Integer>() {
+            @Override
+            public Integer call(Object... args) {
+                assertEquals("No argument should have been passed", 0, args.length);
+                return 0;
+            }
+        });
+
+        TestSubscriber<Object> ts = new TestSubscriber<Object>();
+        o.subscribe(ts);
+        ts.awaitTerminalEvent(200, TimeUnit.MILLISECONDS);
+        ts.assertReceivedOnNext(Collections.emptyList());
+    }
+
+    @Test
+    public void testZipArraySingleItem() {
+        final Integer expected = 0;
+        @SuppressWarnings("unchecked")
+        Observable<Integer>[] ws = new Observable[]{ Observable.just(expected) };
+
+        Observable<Integer> o = Observable.zip(ws, new FuncN<Integer>() {
+            @Override
+            public Integer call(Object... args) {
+                assertEquals("One argument should have been passed", 1, args.length);
+                return expected;
+            }
+        });
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+        o.subscribe(ts);
+        ts.awaitTerminalEvent(200, TimeUnit.MILLISECONDS);
+        ts.assertReceivedOnNext(Collections.singletonList(expected));
+    }
+
+    @Test
+    public void testZipBigArray() {
+        final int size = 20;
+        Integer expected = 0;
+        @SuppressWarnings("unchecked")
+        Observable<Integer>[] ws = new Observable[size];
+
+        for (int i = 0, wsLength = ws.length; i < wsLength; i++) {
+            ws[i] = Observable.just(i);
+            expected += i;
+        }
+
+        final Integer finalExpected = expected;
+        Observable<Integer> o = Observable.zip(ws, new FuncN<Integer>() {
+            @Override
+            public Integer call(Object... args) {
+                assertEquals(size + " arguments should have been passed", size, args.length);
+                return finalExpected;
+            }
+        });
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+        o.subscribe(ts);
+        ts.awaitTerminalEvent(200, TimeUnit.MILLISECONDS);
+        ts.assertReceivedOnNext(Collections.singletonList(expected));
+    }
+
     /**
      * Expect NoSuchElementException instead of blocking forever as zip should emit onCompleted and no onNext
      * and last() expects at least a single response.
@@ -1241,14 +1284,14 @@ public class OperatorZipTest {
         assertEquals(expected, zip2.toList().toBlocking().single());
     }
     @Test
-    public void testUnboundedDownstreamOverrequesting() {
+    public void testUnboundedDownstreamOverRequesting() {
         Observable<Integer> source = Observable.range(1, 2).zipWith(Observable.range(1, 2), new Func2<Integer, Integer, Integer>() {
             @Override
             public Integer call(Integer t1, Integer t2) {
                 return t1 + 10 * t2;
             }
         });
-        
+
         TestSubscriber<Integer> ts = new TestSubscriber<Integer>() {
             @Override
             public void onNext(Integer t) {
@@ -1256,9 +1299,9 @@ public class OperatorZipTest {
                 requestMore(5);
             }
         };
-        
+
         source.subscribe(ts);
-        
+
         ts.assertNoErrors();
         ts.assertTerminalEvent();
         ts.assertReceivedOnNext(Arrays.asList(11, 22));
@@ -1267,7 +1310,7 @@ public class OperatorZipTest {
     public void testZipRace() {
         long startTime = System.currentTimeMillis();
         Observable<Integer> src = Observable.just(1).subscribeOn(Schedulers.computation());
-        
+
         // now try and generate a hang by zipping src with itself repeatedly. A
         // time limit of 9 seconds ( 1 second less than the test timeout) is
         // used so that this test will not timeout on slow machines.
@@ -1279,11 +1322,11 @@ public class OperatorZipTest {
                     return t1 + t2 * 10;
                 }
             }).toBlocking().singleOrDefault(0);
-            
+
             Assert.assertEquals(11, value);
         }
     }
-    /** 
+    /**
      * Request only a single value and don't wait for another request just
      * to emit an onCompleted.
      */
@@ -1296,28 +1339,28 @@ public class OperatorZipTest {
                 requestMore(1);
             }
         };
-        
+
         Observable.zip(src, src, new Func2<Integer, Integer, Integer>() {
             @Override
             public Integer call(Integer t1, Integer t2) {
                 return t1 + t2 * 10;
             }
         }).subscribe(ts);
-        
+
         ts.awaitTerminalEvent(1, TimeUnit.SECONDS);
         ts.assertNoErrors();
         ts.assertReceivedOnNext(Arrays.asList(11));
     }
-    
+
     @SuppressWarnings("cast")
     @Test
     public void testZipObservableObservableBackpressure() {
         @SuppressWarnings("unchecked")
-        Observable<Integer>[] osArray = new Observable[] { 
-                Observable.range(0, 10), 
-                Observable.range(0, 10) 
+        Observable<Integer>[] osArray = new Observable[] {
+                Observable.range(0, 10),
+                Observable.range(0, 10)
         };
-        
+
         Observable<Observable<Integer>> os = (Observable<Observable<Integer>>) Observable.from(osArray);
         Observable<Integer> o1 = Observable.zip(os, new FuncN<Integer>() {
             @Override
@@ -1325,9 +1368,9 @@ public class OperatorZipTest {
                 return 0;
             }
         });
-        
+
         TestSubscriber<Integer> sub1 = TestSubscriber.create(5);
-        
+
         o1.subscribe(sub1);
 
         sub1.requestMore(5);
@@ -1335,5 +1378,120 @@ public class OperatorZipTest {
         sub1.assertValueCount(10);
         sub1.assertNoErrors();
         sub1.assertCompleted();
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @Test
+    public void zip4() {
+        TestSubscriber<String> ts = TestSubscriber.create();
+        Observable<Integer> source = Observable.just(1);
+
+        Observable.zip(source, source, source, source, new Func4() {
+            @Override
+            public Object call(Object t1, Object t2, Object t3, Object t4) {
+                return "" + t1 + t2 + t3 + t4;
+            }
+        })
+        .subscribe(ts);
+
+        ts.assertValue("1111");
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @Test
+    public void zip5() {
+        TestSubscriber<String> ts = TestSubscriber.create();
+        Observable<Integer> source = Observable.just(1);
+
+        Observable.zip(source, source, source, source, source, new Func5() {
+            @Override
+            public Object call(Object t1, Object t2, Object t3, Object t4, Object t5) {
+                return "" + t1 + t2 + t3 + t4 + t5;
+            }
+        })
+        .subscribe(ts);
+
+        ts.assertValue("11111");
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @Test
+    public void zip6() {
+        TestSubscriber<String> ts = TestSubscriber.create();
+        Observable<Integer> source = Observable.just(1);
+
+        Observable.zip(source, source, source, source, source, source, new Func6() {
+            @Override
+            public Object call(Object t1, Object t2, Object t3, Object t4, Object t5, Object t6) {
+                return "" + t1 + t2 + t3 + t4 + t5 + t6;
+            }
+        })
+        .subscribe(ts);
+
+        ts.assertValue("111111");
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @Test
+    public void zip7() {
+        TestSubscriber<String> ts = TestSubscriber.create();
+        Observable<Integer> source = Observable.just(1);
+
+        Observable.zip(source, source, source, source, source, source, source, new Func7() {
+            @Override
+            public Object call(Object t1, Object t2, Object t3, Object t4, Object t5, Object t6, Object t7) {
+                return "" + t1 + t2 + t3 + t4 + t5 + t6 + t7;
+            }
+        })
+        .subscribe(ts);
+
+        ts.assertValue("1111111");
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @Test
+    public void zip8() {
+        TestSubscriber<String> ts = TestSubscriber.create();
+        Observable<Integer> source = Observable.just(1);
+
+        Observable.zip(source, source, source, source, source, source, source, source, new Func8() {
+            @Override
+            public Object call(Object t1, Object t2, Object t3, Object t4, Object t5, Object t6, Object t7, Object t8) {
+                return "" + t1 + t2 + t3 + t4 + t5 + t6 + t7 + t8;
+            }
+        })
+        .subscribe(ts);
+
+        ts.assertValue("11111111");
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @Test
+    public void zip9() {
+        TestSubscriber<String> ts = TestSubscriber.create();
+        Observable<Integer> source = Observable.just(1);
+
+        Observable.zip(source, source, source, source, source, source, source, source, source, new Func9() {
+            @Override
+            public Object call(Object t1, Object t2, Object t3, Object t4, Object t5,
+                    Object t6, Object t7, Object t8, Object t9) {
+                return "" + t1 + t2 + t3 + t4 + t5 + t6 + t7 + t8 + t9;
+            }
+        })
+        .subscribe(ts);
+
+        ts.assertValue("111111111");
+        ts.assertNoErrors();
+        ts.assertCompleted();
     }
 }

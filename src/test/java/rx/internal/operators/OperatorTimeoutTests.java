@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,29 +15,19 @@
  */
 package rx.internal.operators;
 
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.isA;
-import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Matchers.*;
+import static org.mockito.Mockito.*;
 
 import java.io.IOException;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.*;
 
-import org.junit.Before;
-import org.junit.Test;
-import org.mockito.InOrder;
-import org.mockito.MockitoAnnotations;
+import org.junit.*;
+import org.mockito.*;
 
-import rx.Observable;
+import rx.*;
 import rx.Observable.OnSubscribe;
-import rx.Observer;
-import rx.Subscriber;
-import rx.Subscription;
+import rx.functions.Func1;
+import rx.observers.TestSubscriber;
 import rx.schedulers.TestScheduler;
 import rx.subjects.PublishSubject;
 
@@ -109,7 +99,7 @@ public class OperatorTimeoutTests {
     }
 
     @Test
-    public void shouldCompleteIfUnderlyingComletes() {
+    public void shouldCompleteIfUnderlyingCompletes() {
         @SuppressWarnings("unchecked")
         Observer<String> observer = mock(Observer.class);
         Subscription subscription = withTimeout.subscribe(observer);
@@ -359,5 +349,82 @@ public class OperatorTimeoutTests {
         inOrder.verifyNoMoreInteractions();
 
         verify(s, times(1)).unsubscribe();
+    }
+
+    @Test
+    public void withDefaultScheduler() {
+
+        TestSubscriber<Integer> ts = TestSubscriber.create();
+
+        Observable.just(1).timeout(5, TimeUnit.SECONDS).subscribe(ts);
+
+        ts.assertValue(1);
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @Test
+    public void withSelector() {
+
+        TestSubscriber<Integer> ts = TestSubscriber.create();
+
+        Observable.just(1).timeout(new Func1<Integer, Observable<Object>>() {
+            @Override
+            public Observable<Object> call(Integer t) {
+                return Observable.never();
+            }
+        }).subscribe(ts);
+
+        ts.assertValue(1);
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @Test
+    public void withSelectorAndDefault() {
+
+        TestSubscriber<Integer> ts = TestSubscriber.create();
+
+        Observable.just(1).timeout(new Func1<Integer, Observable<Object>>() {
+            @Override
+            public Observable<Object> call(Integer t) {
+                return Observable.never();
+            }
+        }, Observable.just(2)).subscribe(ts);
+
+        ts.assertValue(1);
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @Test
+    public void withSelectorAndDefault2() {
+
+        TestSubscriber<Integer> ts = TestSubscriber.create();
+
+        Observable.just(1).concatWith(
+        Observable.<Integer>never())
+        .timeout(new Func1<Integer, Observable<Object>>() {
+            @Override
+            public Observable<Object> call(Integer t) {
+                return Observable.just((Object)1);
+            }
+        }, Observable.just(2)).subscribe(ts);
+
+        ts.assertValues(1, 2);
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @Test
+    public void withDefaultSchedulerAndOther() {
+
+        TestSubscriber<Integer> ts = TestSubscriber.create();
+
+        Observable.just(1).timeout(5, TimeUnit.SECONDS, Observable.just(2)).subscribe(ts);
+
+        ts.assertValue(1);
+        ts.assertNoErrors();
+        ts.assertCompleted();
     }
 }

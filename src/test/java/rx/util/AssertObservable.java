@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -28,7 +28,7 @@ public final class AssertObservable {
      * Asserts that two Observables are equal. If they are not, an {@link AssertionError} is thrown
      * with the given message. If <code>expecteds</code> and <code>actuals</code> are
      * <code>null</code>, they are considered equal.
-     * 
+     * @param <T> the value tpye
      * @param expected
      *            Observable with expected values.
      * @param actual
@@ -42,7 +42,8 @@ public final class AssertObservable {
      * Asserts that two Observables are equal. If they are not, an {@link AssertionError} is thrown
      * with the given message. If <code>expected</code> and <code>actual</code> are
      * <code>null</code>, they are considered equal.
-     * 
+     *
+     * @param <T> the value tpye
      * @param message
      *            the identifying message for the {@link AssertionError} (<code>null</code> okay)
      * @param expected
@@ -58,13 +59,13 @@ public final class AssertObservable {
      * Asserts that two {@link Observable}s are equal and returns an empty {@link Observable}. If
      * they are not, an {@link Observable} is returned that calls onError with an {@link AssertionError} when subscribed to. If <code>expected</code> and <code>actual</code>
      * are <code>null</code>, they are considered equal.
-     * 
-     * @param message
-     *            the identifying message for the {@link AssertionError} (<code>null</code> okay)
+     *
+     * @param <T> the value tpye
      * @param expected
      *            Observable with expected values.
      * @param actual
      *            Observable with actual values
+     * @return the observable resulting in a complete or error signal.
      */
     public static <T> Observable<Void> assertObservableEquals(Observable<T> expected, Observable<T> actual) {
         return assertObservableEquals(null, expected, actual);
@@ -74,13 +75,15 @@ public final class AssertObservable {
      * Asserts that two {@link Observable}s are equal and returns an empty {@link Observable}. If
      * they are not, an {@link Observable} is returned that calls onError with an {@link AssertionError} when subscribed to with the given message. If <code>expected</code>
      * and <code>actual</code> are <code>null</code>, they are considered equal.
-     * 
+     *
+     * @param <T> the value type
      * @param message
      *            the identifying message for the {@link AssertionError} (<code>null</code> okay)
      * @param expected
      *            Observable with expected values.
      * @param actual
      *            Observable with actual values
+     * @return the observable resulting in a complete or error signal.
      */
     public static <T> Observable<Void> assertObservableEquals(final String message, Observable<T> expected, Observable<T> actual) {
         if (actual == null && expected != null) {

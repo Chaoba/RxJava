@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,8 +15,7 @@
  */
 package rx.internal.operators;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 import static org.mockito.Mockito.*;
 
 import java.util.Arrays;
@@ -192,28 +191,28 @@ public class OperatorTakeUntilTest {
             observer.add(s);
         }
     }
-    
+
     @Test
     public void testUntilFires() {
         PublishSubject<Integer> source = PublishSubject.create();
         PublishSubject<Integer> until = PublishSubject.create();
-        
+
         TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
-        
+
         source.takeUntil(until).unsafeSubscribe(ts);
 
         assertTrue(source.hasObservers());
         assertTrue(until.hasObservers());
 
         source.onNext(1);
-        
+
         ts.assertReceivedOnNext(Arrays.asList(1));
         until.onNext(1);
-        
+
         ts.assertReceivedOnNext(Arrays.asList(1));
         ts.assertNoErrors();
         ts.assertTerminalEvent();
-        
+
         assertFalse("Source still has observers", source.hasObservers());
         assertFalse("Until still has observers", until.hasObservers());
         assertFalse("TestSubscriber is unsubscribed", ts.isUnsubscribed());
@@ -222,9 +221,9 @@ public class OperatorTakeUntilTest {
     public void testMainCompletes() {
         PublishSubject<Integer> source = PublishSubject.create();
         PublishSubject<Integer> until = PublishSubject.create();
-        
+
         TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
-        
+
         source.takeUntil(until).unsafeSubscribe(ts);
 
         assertTrue(source.hasObservers());
@@ -232,11 +231,11 @@ public class OperatorTakeUntilTest {
 
         source.onNext(1);
         source.onCompleted();
-        
+
         ts.assertReceivedOnNext(Arrays.asList(1));
         ts.assertNoErrors();
         ts.assertTerminalEvent();
-        
+
         assertFalse("Source still has observers", source.hasObservers());
         assertFalse("Until still has observers", until.hasObservers());
         assertFalse("TestSubscriber is unsubscribed", ts.isUnsubscribed());
@@ -245,44 +244,44 @@ public class OperatorTakeUntilTest {
     public void testDownstreamUnsubscribes() {
         PublishSubject<Integer> source = PublishSubject.create();
         PublishSubject<Integer> until = PublishSubject.create();
-        
+
         TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
-        
+
         source.takeUntil(until).take(1).unsafeSubscribe(ts);
 
         assertTrue(source.hasObservers());
         assertTrue(until.hasObservers());
 
         source.onNext(1);
-        
+
         ts.assertReceivedOnNext(Arrays.asList(1));
         ts.assertNoErrors();
         ts.assertTerminalEvent();
-        
+
         assertFalse("Source still has observers", source.hasObservers());
         assertFalse("Until still has observers", until.hasObservers());
         assertFalse("TestSubscriber is unsubscribed", ts.isUnsubscribed());
     }
     public void testBackpressure() {
         PublishSubject<Integer> until = PublishSubject.create();
-        
+
         TestSubscriber<Integer> ts = new TestSubscriber<Integer>() {
             @Override
             public void onStart() {
                 requestMore(0);
             }
         };
-        
+
         Observable.range(1, 10).takeUntil(until).unsafeSubscribe(ts);
 
         assertTrue(until.hasObservers());
 
         ts.requestMore(1);
-        
+
         ts.assertReceivedOnNext(Arrays.asList(1));
         ts.assertNoErrors();
-        assertTrue("TestSubscriber completed", ts.getOnCompletedEvents().isEmpty());
-        
+        assertEquals("TestSubscriber completed", 0, ts.getCompletions());
+
         assertFalse("Until still has observers", until.hasObservers());
         assertFalse("TestSubscriber is unsubscribed", ts.isUnsubscribed());
     }

@@ -12,57 +12,74 @@
  */
 package rx;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertSame;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-import static org.mockito.Matchers.eq;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyZeroInteractions;
-import static org.mockito.Mockito.when;
+import static org.junit.Assert.*;
+import static org.mockito.Matchers.*;
+import static org.mockito.Mockito.*;
 
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Set;
-import java.util.concurrent.Callable;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
+import java.io.IOException;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
 
-import org.junit.Test;
-
+import org.junit.*;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
+
 import rx.Single.OnSubscribe;
-import rx.exceptions.CompositeException;
-import rx.functions.Action0;
-import rx.functions.Action1;
-import rx.functions.Func1;
-import rx.functions.Func2;
-import rx.functions.Func3;
-import rx.functions.Func4;
-import rx.functions.Func5;
-import rx.functions.Func6;
-import rx.functions.Func7;
-import rx.functions.Func8;
-import rx.functions.Func9;
-import rx.functions.FuncN;
-import rx.schedulers.TestScheduler;
+import rx.exceptions.*;
+import rx.functions.*;
+import rx.observers.*;
+import rx.plugins.RxJavaHooks;
+import rx.schedulers.*;
 import rx.singles.BlockingSingle;
-import rx.observers.TestSubscriber;
-import rx.schedulers.Schedulers;
+import rx.subjects.PublishSubject;
 import rx.subscriptions.Subscriptions;
 
 public class SingleTest {
+
+    @SuppressWarnings("rawtypes")
+    private Func1<Single.OnSubscribe, Single.OnSubscribe> onCreate;
+
+    @SuppressWarnings("rawtypes")
+    private Func2<Single, Single.OnSubscribe, Single.OnSubscribe> onStart;
+
+    private Func1<Subscription, Subscription> onReturn;
+
+    @SuppressWarnings("rawtypes")
+    @Before
+    public void setUp() throws Exception {
+        onCreate = spy(new Func1<Single.OnSubscribe, Single.OnSubscribe>() {
+            @Override
+            public Single.OnSubscribe call(Single.OnSubscribe t) {
+                return t;
+            }
+        });
+
+        RxJavaHooks.setOnSingleCreate(onCreate);
+
+        onStart = spy(new Func2<Single, Single.OnSubscribe, Single.OnSubscribe>() {
+            @Override
+            public Single.OnSubscribe call(Single t1, Single.OnSubscribe t2) {
+                return t2;
+            }
+        });
+
+        RxJavaHooks.setOnSingleStart(onStart);
+
+        onReturn = spy(new Func1<Subscription, Subscription>() {
+            @Override
+            public Subscription call(Subscription t) {
+                return t;
+            }
+        });
+
+        RxJavaHooks.setOnSingleReturn(onReturn);
+    }
+
+    @After
+    public void after() {
+        RxJavaHooks.reset();
+    }
 
     @Test
     public void testHelloWorld() {
@@ -305,6 +322,7 @@ public class SingleTest {
     @Test
     public void zipIterableShouldZipListOfSingles() {
         TestSubscriber<String> ts = new TestSubscriber<String>();
+        @SuppressWarnings("unchecked")
         Iterable<Single<Integer>> singles = Arrays.asList(Single.just(1), Single.just(2), Single.just(3));
 
         Single
@@ -354,6 +372,26 @@ public class SingleTest {
     }
 
     @Test
+    public void zipEmptyIterableShouldThrow() {
+        TestSubscriber<Object> testSubscriber = new TestSubscriber<Object>();
+        Iterable<Single<Object>> singles = Collections.emptyList();
+
+        Single
+                .zip(singles, new FuncN<Object>() {
+                    @Override
+                    public Object call(Object... args) {
+                        throw new IllegalStateException("Should not be called");
+                    }
+                })
+                .subscribe(testSubscriber);
+
+        testSubscriber.assertNoValues();
+        testSubscriber.assertNotCompleted();
+        testSubscriber.assertError(NoSuchElementException.class);
+        assertEquals("Can't zip 0 Singles.", testSubscriber.getOnErrorEvents().get(0).getMessage());
+    }
+
+    @Test
     public void testZipWith() {
         TestSubscriber<String> ts = new TestSubscriber<String>();
 
@@ -385,6 +423,84 @@ public class SingleTest {
 
         Single.just("A").mergeWith(Single.just("B")).subscribe(ts);
         ts.assertReceivedOnNext(Arrays.asList("A", "B"));
+    }
+
+    @Test
+    public void testHookCreate() {
+        @SuppressWarnings("unchecked")
+        OnSubscribe<Object> subscriber = mock(OnSubscribe.class);
+        Single.create(subscriber);
+
+        verify(onCreate, times(1)).call(subscriber);
+    }
+
+    @Test
+    public void testHookSubscribeStart() {
+        TestSubscriber<String> ts = new TestSubscriber<String>();
+
+        Single<String> single = Single.create(new OnSubscribe<String>() {
+            @Override public void call(SingleSubscriber<? super String> s) {
+                s.onSuccess("Hello");
+            }
+        });
+        single.subscribe(ts);
+
+        verify(onStart, times(1)).call(eq(single), any(Single.OnSubscribe.class));
+    }
+
+    @Test
+    public void testHookUnsafeSubscribeStart() {
+        TestSubscriber<String> ts = new TestSubscriber<String>();
+        Single<String> single = Single.create(new OnSubscribe<String>() {
+            @Override public void call(SingleSubscriber<? super String> s) {
+                s.onSuccess("Hello");
+            }
+        });
+        single.unsafeSubscribe(ts);
+
+        verify(onStart, times(1)).call(eq(single), any(Single.OnSubscribe.class));
+    }
+
+    @Test
+    public void testHookSubscribeReturn() {
+        TestSubscriber<String> ts = new TestSubscriber<String>();
+
+        Single<String> single = Single.create(new OnSubscribe<String>() {
+            @Override public void call(SingleSubscriber<? super String> s) {
+                s.onSuccess("Hello");
+            }
+        });
+        single.subscribe(ts);
+
+        verify(onReturn, times(1)).call(any(SafeSubscriber.class));
+    }
+
+    @Test
+    public void testHookUnsafeSubscribeReturn() {
+        TestSubscriber<String> ts = new TestSubscriber<String>();
+
+        Single<String> single = Single.create(new OnSubscribe<String>() {
+            @Override public void call(SingleSubscriber<? super String> s) {
+                s.onSuccess("Hello");
+            }
+        });
+        single.unsafeSubscribe(ts);
+
+        verify(onReturn, times(1)).call(ts);
+    }
+
+    @Test
+    public void testReturnUnsubscribedWhenHookThrowsError() {
+        TestSubscriber<String> ts = new TestSubscriber<String>();
+
+        Single<String> single = Single.create(new OnSubscribe<String>() {
+            @Override public void call(SingleSubscriber<? super String> s) {
+                throw new RuntimeException("Exception");
+            }
+        });
+        Subscription subscription = single.unsafeSubscribe(ts);
+
+        assertTrue(subscription.isUnsubscribed());
     }
 
     @Test
@@ -570,6 +686,7 @@ public class SingleTest {
 
     /**
      * Assert that unsubscribe propagates when passing in a SingleSubscriber and not a Subscriber
+     * @throws InterruptedException on interrupt
      */
     @Test
     public void testUnsubscribe2() throws InterruptedException {
@@ -639,6 +756,7 @@ public class SingleTest {
 
     /**
      * Assert that unsubscribe propagates when passing in a SingleSubscriber and not a Subscriber
+     * @throws InterruptedException on interrupt
      */
     @Test
     public void testUnsubscribeViaReturnedSubscription() throws InterruptedException {
@@ -721,15 +839,44 @@ public class SingleTest {
 
     @Test
     public void testToObservable() {
-    	Observable<String> a = Single.just("a").toObservable();
-    	TestSubscriber<String> ts = TestSubscriber.create();
-    	a.subscribe(ts);
-    	ts.assertValue("a");
-    	ts.assertCompleted();
+        Observable<String> a = Single.just("a").toObservable();
+        TestSubscriber<String> ts = TestSubscriber.create();
+        a.subscribe(ts);
+        ts.assertValue("a");
+        ts.assertCompleted();
+    }
+
+    @Test
+    public void toCompletableSuccess() {
+        Completable completable = Single.just("value").toCompletable();
+        TestSubscriber<Object> testSubscriber = new TestSubscriber<Object>();
+        completable.unsafeSubscribe(testSubscriber);
+
+        testSubscriber.assertCompleted();
+        testSubscriber.assertNoValues();
+        testSubscriber.assertNoErrors();
+    }
+
+    @Test
+    public void toCompletableError() {
+        TestException exception = new TestException();
+        Completable completable = Single.error(exception).toCompletable();
+        TestSubscriber<Object> testSubscriber = new TestSubscriber<Object>();
+        completable.unsafeSubscribe(testSubscriber);
+
+        testSubscriber.assertError(exception);
+        testSubscriber.assertNoValues();
+        testSubscriber.assertNotCompleted();
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void doOnErrorNull() {
+        Single.just(1).doOnError(null);
     }
 
     @Test
     public void doOnErrorShouldNotCallActionIfNoErrorHasOccurred() {
+        @SuppressWarnings("unchecked")
         Action1<Throwable> action = mock(Action1.class);
 
         TestSubscriber<String> testSubscriber = new TestSubscriber<String>();
@@ -747,6 +894,7 @@ public class SingleTest {
 
     @Test
     public void doOnErrorShouldCallActionIfErrorHasOccurred() {
+        @SuppressWarnings("unchecked")
         Action1<Throwable> action = mock(Action1.class);
 
         TestSubscriber<Object> testSubscriber = new TestSubscriber<Object>();
@@ -766,6 +914,7 @@ public class SingleTest {
 
     @Test
     public void doOnErrorShouldThrowCompositeExceptionIfOnErrorActionThrows() {
+        @SuppressWarnings("unchecked")
         Action1<Throwable> action = mock(Action1.class);
 
 
@@ -792,6 +941,7 @@ public class SingleTest {
 
     @Test
     public void shouldEmitValueFromCallable() throws Exception {
+        @SuppressWarnings("unchecked")
         Callable<String> callable = mock(Callable.class);
 
         when(callable.call()).thenReturn("value");
@@ -810,6 +960,7 @@ public class SingleTest {
 
     @Test
     public void shouldPassErrorFromCallable() throws Exception {
+        @SuppressWarnings("unchecked")
         Callable<String> callable = mock(Callable.class);
 
         Throwable error = new IllegalStateException();
@@ -828,8 +979,14 @@ public class SingleTest {
         verify(callable).call();
     }
 
+    @Test(expected = IllegalArgumentException.class)
+    public void doOnSuccessNull() {
+        Single.just(1).doOnSuccess(null);
+    }
+
     @Test
     public void doOnSuccessShouldInvokeAction() {
+        @SuppressWarnings("unchecked")
         Action1<String> action = mock(Action1.class);
 
         TestSubscriber<String> testSubscriber = new TestSubscriber<String>();
@@ -847,6 +1004,7 @@ public class SingleTest {
 
     @Test
     public void doOnSuccessShouldPassErrorFromActionToSubscriber() {
+        @SuppressWarnings("unchecked")
         Action1<String> action = mock(Action1.class);
 
         Throwable error = new IllegalStateException();
@@ -867,6 +1025,7 @@ public class SingleTest {
 
     @Test
     public void doOnSuccessShouldNotCallActionIfSingleThrowsError() {
+        @SuppressWarnings("unchecked")
         Action1<Object> action = mock(Action1.class);
 
         Throwable error = new IllegalStateException();
@@ -886,6 +1045,7 @@ public class SingleTest {
 
     @Test
     public void doOnSuccessShouldNotSwallowExceptionThrownByAction() {
+        @SuppressWarnings("unchecked")
         Action1<String> action = mock(Action1.class);
 
         Throwable exceptionFromAction = new IllegalStateException();
@@ -903,6 +1063,43 @@ public class SingleTest {
         testSubscriber.assertError(exceptionFromAction);
 
         verify(action).call(eq("value"));
+    }
+
+    @Test
+    public void doOnSubscribeShouldInvokeAction() {
+        Action0 action = mock(Action0.class);
+        Single<Integer> single = Single.just(1).doOnSubscribe(action);
+
+        verifyZeroInteractions(action);
+
+        single.subscribe();
+        single.subscribe();
+
+        verify(action, times(2)).call();
+    }
+
+    @Test
+    public void doOnSubscribeShouldInvokeActionBeforeSubscriberSubscribes() {
+        final List<String> callSequence = new ArrayList<String>(2);
+
+        Single<Integer> single = Single.create(new OnSubscribe<Integer>() {
+            @Override
+            public void call(SingleSubscriber<? super Integer> singleSubscriber) {
+                callSequence.add("onSubscribe");
+                singleSubscriber.onSuccess(1);
+            }
+        }).doOnSubscribe(new Action0() {
+            @Override
+            public void call() {
+                callSequence.add("doOnSubscribe");
+            }
+        });
+
+        single.subscribe();
+
+        assertEquals(2, callSequence.size());
+        assertEquals("doOnSubscribe", callSequence.get(0));
+        assertEquals("onSubscribe", callSequence.get(1));
     }
 
     @Test
@@ -946,6 +1143,7 @@ public class SingleTest {
 
     @Test
     public void deferShouldNotCallFactoryFuncUntilSubscriberSubscribes() throws Exception {
+        @SuppressWarnings("unchecked")
         Callable<Single<Object>> singleFactory = mock(Callable.class);
         Single.defer(singleFactory);
         verifyZeroInteractions(singleFactory);
@@ -953,6 +1151,7 @@ public class SingleTest {
 
     @Test
     public void deferShouldSubscribeSubscriberToSingleFromFactoryFuncAndEmitValue() throws Exception {
+        @SuppressWarnings("unchecked")
         Callable<Single<Object>> singleFactory = mock(Callable.class);
         Object value = new Object();
         Single<Object> single = Single.just(value);
@@ -973,6 +1172,7 @@ public class SingleTest {
 
     @Test
     public void deferShouldSubscribeSubscriberToSingleFromFactoryFuncAndEmitError() throws Exception {
+        @SuppressWarnings("unchecked")
         Callable<Single<Object>> singleFactory = mock(Callable.class);
         Throwable error = new IllegalStateException();
         Single<Object> single = Single.error(error);
@@ -993,6 +1193,7 @@ public class SingleTest {
 
     @Test
     public void deferShouldPassErrorFromSingleFactoryToTheSubscriber() throws Exception {
+        @SuppressWarnings("unchecked")
         Callable<Single<Object>> singleFactory = mock(Callable.class);
         Throwable errorFromSingleFactory = new IllegalStateException();
         when(singleFactory.call()).thenThrow(errorFromSingleFactory);
@@ -1011,10 +1212,12 @@ public class SingleTest {
 
     @Test
     public void deferShouldCallSingleFactoryForEachSubscriber() throws Exception {
+        @SuppressWarnings("unchecked")
         Callable<Single<String>> singleFactory = mock(Callable.class);
 
         String[] values = {"1", "2", "3"};
-        final Single[] singles = new Single[]{Single.just(values[0]), Single.just(values[1]), Single.just(values[2])};
+        @SuppressWarnings("unchecked")
+        final Single<String>[] singles = new Single[] {Single.just(values[0]), Single.just(values[1]), Single.just(values[2])};
 
         final AtomicInteger singleFactoryCallsCounter = new AtomicInteger();
 
@@ -1027,7 +1230,7 @@ public class SingleTest {
 
         Single<String> deferredSingle = Single.defer(singleFactory);
 
-        for (int i = 0; i < singles.length; i ++) {
+        for (int i = 0; i < singles.length; i++) {
             TestSubscriber<String> testSubscriber = new TestSubscriber<String>();
 
             deferredSingle.subscribe(testSubscriber);
@@ -1054,6 +1257,7 @@ public class SingleTest {
 
     @Test
     public void deferShouldPassNullPointerExceptionToTheSubscriberIfSingleFactoryReturnsNull() throws Exception {
+        @SuppressWarnings("unchecked")
         Callable<Single<Object>> singleFactory = mock(Callable.class);
         when(singleFactory.call()).thenReturn(null);
 
@@ -1074,8 +1278,8 @@ public class SingleTest {
         Action0 action = mock(Action0.class);
 
         Single<String> single = Single
-            .just("test")
-            .doOnUnsubscribe(action);
+                .just("test")
+                .doOnUnsubscribe(action);
 
         verifyZeroInteractions(action);
 
@@ -1093,8 +1297,8 @@ public class SingleTest {
         Action0 action = mock(Action0.class);
 
         Single<Object> single = Single
-            .error(new RuntimeException("test"))
-            .doOnUnsubscribe(action);
+                .error(new RuntimeException("test"))
+                .doOnUnsubscribe(action);
 
         verifyZeroInteractions(action);
 
@@ -1112,13 +1316,13 @@ public class SingleTest {
         Action0 action = mock(Action0.class);
 
         Single<Object> single = Single
-            .create(new OnSubscribe<Object>() {
-                @Override
-                public void call(SingleSubscriber<? super Object> singleSubscriber) {
-                    // Broken Single that never ends itself (simulates long computation in one thread).
-                }
-            })
-            .doOnUnsubscribe(action);
+                .create(new OnSubscribe<Object>() {
+                    @Override
+                    public void call(SingleSubscriber<? super Object> singleSubscriber) {
+                        // Broken Single that never ends itself (simulates long computation in one thread).
+                    }
+                })
+                .doOnUnsubscribe(action);
 
         TestSubscriber<Object> testSubscriber = new TestSubscriber<Object>();
         Subscription subscription = single.subscribe(testSubscriber);
@@ -1199,7 +1403,7 @@ public class SingleTest {
         TestSubscriber<String> testSubscriber = new TestSubscriber<String>();
 
         Single
-                .<String>error(new RuntimeException("test exception"))
+                .<String> error(new RuntimeException("test exception"))
                 .onErrorResumeNext(Single.just("fallback"))
                 .subscribe(testSubscriber);
 
@@ -1211,10 +1415,75 @@ public class SingleTest {
         try {
             Single
                     .just("value")
-                    .onErrorResumeNext(null);
+                    .onErrorResumeNext((Single<String>) null);
             fail();
         } catch (NullPointerException expected) {
             assertEquals("resumeSingleInCaseOfError must not be null", expected.getMessage());
+        }
+    }
+
+    @Test
+    public void onErrorResumeNextViaFunctionShouldNotInterruptSuccessfulSingle() {
+        TestSubscriber<String> testSubscriber = new TestSubscriber<String>();
+
+        Single
+                .just("success")
+                .onErrorResumeNext(new Func1<Throwable, Single<? extends String>>() {
+                    @Override
+                    public Single<? extends String> call(Throwable throwable) {
+                        return Single.just("fail");
+                    }
+                })
+                .subscribe(testSubscriber);
+
+        testSubscriber.assertValue("success");
+    }
+
+    @Test
+    public void onErrorResumeNextViaFunctionShouldResumeWithPassedSingleInCaseOfError() {
+        TestSubscriber<String> testSubscriber = new TestSubscriber<String>();
+
+        Single
+                .<String> error(new RuntimeException("test exception"))
+                .onErrorResumeNext(new Func1<Throwable, Single<? extends String>>() {
+                    @Override
+                    public Single<? extends String> call(Throwable throwable) {
+                        return Single.just("fallback");
+                    }
+                })
+                .subscribe(testSubscriber);
+
+        testSubscriber.assertValue("fallback");
+    }
+
+    @Test
+    public void onErrorResumeNextViaFunctionShouldPreventNullFunction() {
+        try {
+            Single
+                    .just("value")
+                    .onErrorResumeNext((Func1<Throwable, ? extends Single<? extends String>>) null);
+            fail();
+        } catch (NullPointerException expected) {
+            assertEquals("resumeFunctionInCaseOfError must not be null", expected.getMessage());
+        }
+    }
+
+    @Test
+    public void onErrorResumeNextViaFunctionShouldFailIfFunctionReturnsNull() {
+        try {
+            Single
+                    .error(new TestException())
+                    .onErrorResumeNext(new Func1<Throwable, Single<? extends String>>() {
+                        @Override
+                        public Single<? extends String> call(Throwable throwable) {
+                            return null;
+                        }
+                    })
+                    .subscribe();
+
+            fail();
+        } catch (OnErrorNotImplementedException expected) {
+            assertTrue(expected.getCause() instanceof NullPointerException);
         }
     }
 
@@ -1225,6 +1494,7 @@ public class SingleTest {
 
     @Test
     public void iterableToArrayShouldConvertList() {
+        @SuppressWarnings("unchecked")
         List<Single<String>> singlesList = Arrays.asList(Single.just("1"), Single.just("2"));
 
         Single<? extends String>[] singlesArray = Single.iterableToArray(singlesList);
@@ -1247,5 +1517,670 @@ public class SingleTest {
         assertEquals(2, singlesArray.length);
         assertSame(s1, singlesArray[0]);
         assertSame(s2, singlesArray[1]);
+    }
+
+    @Test(timeout = 2000)
+    public void testRetry() {
+        TestSubscriber<String> testSubscriber = new TestSubscriber<String>();
+        final TestSubscriber<Integer> retryCounter = new TestSubscriber<Integer>();
+
+        final int retryCount = 100;
+        Callable<String> callable = new Callable<String>() {
+
+            @Override
+            public String call() throws Exception {
+                int errors = retryCounter.getOnErrorEvents().size();
+                if (errors < retryCount) {
+                    Exception exception = new Exception();
+                    retryCounter.onError(exception);
+                    throw exception;
+                }
+                return null;
+            }
+
+        };
+
+        Single.fromCallable(callable)
+                .retry()
+                .subscribe(testSubscriber);
+
+        testSubscriber.assertCompleted();
+        int numberOfErrors = retryCounter.getOnErrorEvents().size();
+        assertEquals(retryCount, numberOfErrors);
+    }
+
+    @Test(timeout = 2000)
+    public void testRetryWithCount() {
+        TestSubscriber<String> testSubscriber = new TestSubscriber<String>();
+        final TestSubscriber<Integer> retryCounter = new TestSubscriber<Integer>();
+
+        final int retryCount = 100;
+        Callable<String> callable = new Callable<String>() {
+
+            @Override
+            public String call() throws Exception {
+                int errors = retryCounter.getOnErrorEvents().size();
+                if (errors < retryCount) {
+                    Exception exception = new Exception();
+                    retryCounter.onError(exception);
+                    throw exception;
+                }
+
+                return null;
+            }
+        };
+
+        Single.fromCallable(callable)
+                .retry(retryCount)
+                .subscribe(testSubscriber);
+
+        testSubscriber.assertCompleted();
+        int numberOfErrors = retryCounter.getOnErrorEvents().size();
+        assertEquals(retryCount, numberOfErrors);
+    }
+
+    @Test
+    public void testRetryWithPredicate() {
+        TestSubscriber<String> testSubscriber = new TestSubscriber<String>();
+        final TestSubscriber<Integer> retryCounter = new TestSubscriber<Integer>();
+
+        final int retryCount = 100;
+        Callable<String> callable = new Callable<String>() {
+
+            @Override
+            public String call() throws Exception {
+                int errors = retryCounter.getOnErrorEvents().size();
+                if (errors < retryCount) {
+                    IOException exception = new IOException();
+                    retryCounter.onError(exception);
+                    throw exception;
+                }
+                return null;
+            }
+        };
+
+        Single.fromCallable(callable)
+                .retry(new Func2<Integer, Throwable, Boolean>() {
+                    @Override
+                    public Boolean call(Integer integer, Throwable throwable) {
+                        return throwable instanceof IOException;
+                    }
+                })
+                .subscribe(testSubscriber);
+
+        testSubscriber.assertCompleted();
+        int numberOfErrors = retryCounter.getOnErrorEvents().size();
+        assertEquals(retryCount, numberOfErrors);
+    }
+
+    @Test
+    public void testRetryWhen() {
+        TestSubscriber<String> testSubscriber = new TestSubscriber<String>();
+        final TestSubscriber<Integer> retryCounter = new TestSubscriber<Integer>();
+
+        final int retryCount = 100;
+
+        Callable<String> callable = new Callable<String>() {
+
+            @Override
+            public String call() throws Exception {
+                int errors = retryCounter.getOnErrorEvents().size();
+                if (errors < retryCount) {
+                    IOException exception = new IOException();
+                    retryCounter.onError(exception);
+                    throw exception;
+                }
+                return null;
+            }
+        };
+
+        Single.fromCallable(callable)
+                .retryWhen(new Func1<Observable<? extends Throwable>, Observable<?>>() {
+                    @Override
+                    public Observable<?> call(Observable<? extends Throwable> observable) {
+
+                        return observable.flatMap(new Func1<Throwable, Observable<?>>() {
+                            @Override
+                            public Observable<?> call(Throwable throwable) {
+                                return throwable instanceof IOException ? Observable.just(null) : Observable.error(throwable);
+                            }
+                        });
+                    }
+                })
+                .subscribe(testSubscriber);
+
+        int numberOfErrors = retryCounter.getOnErrorEvents().size();
+        assertEquals(retryCount, numberOfErrors);
+    }
+
+    @Test
+    public void takeUntilCompletableFires() {
+        PublishSubject<Integer> source = PublishSubject.create();
+        PublishSubject<Integer> until = PublishSubject.create();
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+
+        source.take(1).toSingle().takeUntil(until.toCompletable()).unsafeSubscribe(ts);
+
+        assertTrue(source.hasObservers());
+        assertTrue(until.hasObservers());
+
+        until.onCompleted();
+
+        ts.assertError(CancellationException.class);
+
+        assertFalse(source.hasObservers());
+        assertFalse(until.hasObservers());
+        assertFalse(ts.isUnsubscribed());
+    }
+
+    @Test
+    public void takeUntilObservableFires() {
+        PublishSubject<Integer> source = PublishSubject.create();
+        PublishSubject<Integer> until = PublishSubject.create();
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+
+        source.take(1).toSingle().takeUntil(until.take(1)).unsafeSubscribe(ts);
+
+        assertTrue(source.hasObservers());
+        assertTrue(until.hasObservers());
+
+        until.onNext(1);
+
+        ts.assertError(CancellationException.class);
+
+        assertFalse(source.hasObservers());
+        assertFalse(until.hasObservers());
+        assertFalse(ts.isUnsubscribed());
+    }
+
+    @Test
+    public void takeUntilSingleFires() {
+        PublishSubject<Integer> source = PublishSubject.create();
+        PublishSubject<Integer> until = PublishSubject.create();
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+
+        source.take(1).toSingle().takeUntil(until.take(1).toSingle()).unsafeSubscribe(ts);
+
+        assertTrue(source.hasObservers());
+        assertTrue(until.hasObservers());
+
+        until.onNext(1);
+
+        ts.assertError(CancellationException.class);
+
+        assertFalse(source.hasObservers());
+        assertFalse(until.hasObservers());
+        assertFalse(ts.isUnsubscribed());
+    }
+
+    @Test
+    public void takeUntilObservableCompletes() {
+        PublishSubject<Integer> source = PublishSubject.create();
+        PublishSubject<Integer> until = PublishSubject.create();
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+
+        source.take(1).toSingle().takeUntil(until.take(1)).unsafeSubscribe(ts);
+
+        assertTrue(source.hasObservers());
+        assertTrue(until.hasObservers());
+
+        until.onCompleted();
+
+        ts.assertError(CancellationException.class);
+
+        assertFalse(source.hasObservers());
+        assertFalse(until.hasObservers());
+        assertFalse(ts.isUnsubscribed());
+    }
+
+    @Test
+    public void takeUntilSourceUnsubscribes_withCompletable() {
+        PublishSubject<Integer> source = PublishSubject.create();
+        PublishSubject<Integer> until = PublishSubject.create();
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+
+        source.take(1).toSingle().takeUntil(until.toCompletable()).unsafeSubscribe(ts);
+
+        assertTrue(source.hasObservers());
+        assertTrue(until.hasObservers());
+
+        source.onNext(1);
+
+        ts.assertValue(1);
+        ts.assertNoErrors();
+        ts.assertTerminalEvent();
+
+        assertFalse(source.hasObservers());
+        assertFalse(until.hasObservers());
+        assertFalse(ts.isUnsubscribed());
+    }
+
+    @Test
+    public void takeUntilSourceUnsubscribes_withObservable() {
+        PublishSubject<Integer> source = PublishSubject.create();
+        PublishSubject<Integer> until = PublishSubject.create();
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+
+        source.take(1).toSingle().takeUntil(until).unsafeSubscribe(ts);
+
+        assertTrue(source.hasObservers());
+        assertTrue(until.hasObservers());
+
+        source.onNext(1);
+
+        ts.assertValue(1);
+        ts.assertNoErrors();
+        ts.assertTerminalEvent();
+
+        assertFalse(source.hasObservers());
+        assertFalse(until.hasObservers());
+        assertFalse(ts.isUnsubscribed());
+    }
+
+    @Test
+    public void takeUntilSourceUnsubscribes_withSingle() {
+        PublishSubject<Integer> source = PublishSubject.create();
+        PublishSubject<Integer> until = PublishSubject.create();
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+
+        source.take(1).toSingle().takeUntil(until.take(1).toSingle()).unsafeSubscribe(ts);
+
+        assertTrue(source.hasObservers());
+        assertTrue(until.hasObservers());
+
+        source.onNext(1);
+
+        ts.assertValue(1);
+        ts.assertNoErrors();
+        ts.assertTerminalEvent();
+
+        assertFalse(source.hasObservers());
+        assertFalse(until.hasObservers());
+        assertFalse(ts.isUnsubscribed());
+    }
+
+    @Test
+    public void takeUntilSourceErrorUnsubscribes_withCompletable() {
+        PublishSubject<Integer> source = PublishSubject.create();
+        PublishSubject<Integer> until = PublishSubject.create();
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+
+        source.take(1).toSingle().takeUntil(until.toCompletable()).unsafeSubscribe(ts);
+
+        assertTrue(source.hasObservers());
+        assertTrue(until.hasObservers());
+
+        Exception e = new Exception();
+        source.onError(e);
+
+        ts.assertNoValues();
+        ts.assertError(e);
+
+        assertFalse(source.hasObservers());
+        assertFalse(until.hasObservers());
+        assertFalse(ts.isUnsubscribed());
+    }
+
+    @Test
+    public void takeUntilSourceErrorUnsubscribes_withObservable() {
+        PublishSubject<Integer> source = PublishSubject.create();
+        PublishSubject<Integer> until = PublishSubject.create();
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+
+        source.take(1).toSingle().takeUntil(until).unsafeSubscribe(ts);
+
+        assertTrue(source.hasObservers());
+        assertTrue(until.hasObservers());
+
+        source.onError(new Throwable());
+
+        ts.assertNoValues();
+        ts.assertError(Throwable.class);
+
+        assertFalse(source.hasObservers());
+        assertFalse(until.hasObservers());
+        assertFalse(ts.isUnsubscribed());
+    }
+
+    @Test
+    public void takeUntilSourceErrorUnsubscribes_withSingle() {
+        PublishSubject<Integer> source = PublishSubject.create();
+        PublishSubject<Integer> until = PublishSubject.create();
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+
+        source.take(1).toSingle().takeUntil(until.take(1).toSingle()).unsafeSubscribe(ts);
+
+        assertTrue(source.hasObservers());
+        assertTrue(until.hasObservers());
+
+        source.onError(new Throwable());
+
+        ts.assertNoValues();
+        ts.assertError(Throwable.class);
+
+        assertFalse(source.hasObservers());
+        assertFalse(until.hasObservers());
+        assertFalse(ts.isUnsubscribed());
+    }
+
+    @Test
+    public void takeUntilError_withCompletable_shouldMatch() {
+        PublishSubject<Integer> source = PublishSubject.create();
+        PublishSubject<Integer> until = PublishSubject.create();
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+
+        source.take(1).toSingle().takeUntil(until.toCompletable()).unsafeSubscribe(ts);
+
+        assertTrue(source.hasObservers());
+        assertTrue(until.hasObservers());
+
+        Exception e = new Exception();
+        until.onError(e);
+
+        ts.assertNoValues();
+        ts.assertError(e);
+
+        assertFalse(source.hasObservers());
+        assertFalse(until.hasObservers());
+        assertFalse(ts.isUnsubscribed());
+    }
+
+    @Test
+    public void takeUntilError_withObservable_shouldMatch() {
+        PublishSubject<Integer> source = PublishSubject.create();
+        PublishSubject<Integer> until = PublishSubject.create();
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+
+        source.take(1).toSingle().takeUntil(until.asObservable()).unsafeSubscribe(ts);
+
+        assertTrue(source.hasObservers());
+        assertTrue(until.hasObservers());
+
+        Exception e = new Exception();
+        until.onError(e);
+
+        ts.assertNoValues();
+        ts.assertError(e);
+
+        assertFalse(source.hasObservers());
+        assertFalse(until.hasObservers());
+        assertFalse(ts.isUnsubscribed());
+    }
+
+    @Test
+    public void takeUntilError_withSingle_shouldMatch() {
+        PublishSubject<Integer> source = PublishSubject.create();
+        PublishSubject<Integer> until = PublishSubject.create();
+
+        TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
+
+        source.take(1).toSingle().takeUntil(until.take(1).toSingle()).unsafeSubscribe(ts);
+
+        assertTrue(source.hasObservers());
+        assertTrue(until.hasObservers());
+
+        Exception e = new Exception();
+        until.onError(e);
+
+        ts.assertNoValues();
+        ts.assertError(e);
+
+        assertFalse(source.hasObservers());
+        assertFalse(until.hasObservers());
+        assertFalse(ts.isUnsubscribed());
+    }
+
+    @Test
+    public void subscribeWithObserver() {
+        @SuppressWarnings("unchecked")
+        Observer<Integer> o = mock(Observer.class);
+
+        Single.just(1).subscribe(o);
+
+        verify(o).onNext(1);
+        verify(o).onCompleted();
+        verify(o, never()).onError(any(Throwable.class));
+    }
+
+    @Test
+    public void subscribeWithObserverAndGetError() {
+        @SuppressWarnings("unchecked")
+        Observer<Integer> o = mock(Observer.class);
+
+        Single.<Integer>error(new TestException()).subscribe(o);
+
+        verify(o, never()).onNext(anyInt());
+        verify(o, never()).onCompleted();
+        verify(o).onError(any(TestException.class));
+    }
+
+    @Test
+    public void subscribeWithNullObserver() {
+        try {
+            Single.just(1).subscribe((Observer<Integer>)null);
+            fail("Failed to throw NullPointerException");
+        } catch (NullPointerException ex) {
+            assertEquals("observer is null", ex.getMessage());
+        }
+    }
+
+    @Test
+    public void unsubscribeComposesThrough() {
+        PublishSubject<Integer> ps = PublishSubject.create();
+
+        Subscription s = ps.toSingle()
+        .flatMap(new Func1<Integer, Single<Integer>>() {
+            @Override
+            public Single<Integer> call(Integer v) {
+                return Single.just(1);
+            }
+        })
+        .subscribe();
+
+        s.unsubscribe();
+
+        assertFalse("Observers present?!", ps.hasObservers());
+    }
+
+    @Test(timeout = 1000)
+    public void unsubscribeComposesThroughAsync() {
+        PublishSubject<Integer> ps = PublishSubject.create();
+
+        Subscription s = ps.toSingle()
+        .subscribeOn(Schedulers.io())
+        .flatMap(new Func1<Integer, Single<Integer>>() {
+            @Override
+            public Single<Integer> call(Integer v) {
+                return Single.just(1);
+            }
+        })
+        .subscribe();
+
+        while (!ps.hasObservers() && !Thread.currentThread().isInterrupted()) ;
+
+        s.unsubscribe();
+
+        assertFalse("Observers present?!", ps.hasObservers());
+    }
+
+    @Test
+    public void flatMapCompletableComplete() {
+        final AtomicInteger atomicInteger = new AtomicInteger();
+        TestSubscriber<Object> testSubscriber = TestSubscriber.create();
+
+        Single.just(1).flatMapCompletable(new Func1<Integer, Completable>() {
+            @Override
+            public Completable call(final Integer integer) {
+                return Completable.fromAction(new Action0() {
+                    @Override
+                    public void call() {
+                        atomicInteger.set(5);
+                    }
+                });
+            }
+        }).subscribe(testSubscriber);
+
+        testSubscriber.assertCompleted();
+
+        assertEquals(5, atomicInteger.get());
+    }
+
+    @Test
+    public void flatMapCompletableError() {
+        final RuntimeException error = new RuntimeException("some error");
+        TestSubscriber<Object> testSubscriber = TestSubscriber.create();
+
+        Single.just(1).flatMapCompletable(new Func1<Integer, Completable>() {
+            @Override
+            public Completable call(final Integer integer) {
+                return Completable.error(error);
+            }
+        }).subscribe(testSubscriber);
+
+        testSubscriber.assertError(error);
+    }
+
+    @Test
+    public void flatMapCompletableNullCompletable() {
+        TestSubscriber<Object> testSubscriber = TestSubscriber.create();
+
+        Single.just(1).flatMapCompletable(new Func1<Integer, Completable>() {
+            @Override
+            public Completable call(final Integer integer) {
+                return null;
+            }
+        }).subscribe(testSubscriber);
+
+        testSubscriber.assertError(NullPointerException.class);
+    }
+
+    @Test
+    public void flatMapCompletableException() {
+        TestSubscriber<Object> testSubscriber = TestSubscriber.create();
+
+        Single.just(1).flatMapCompletable(new Func1<Integer, Completable>() {
+            @Override
+            public Completable call(final Integer integer) {
+                throw new UnsupportedOperationException();
+            }
+        }).subscribe(testSubscriber);
+
+        testSubscriber.assertError(UnsupportedOperationException.class);
+    }
+
+    @Test public void toFunctionReceivesObservableReturnsResult() {
+        Single<String> s = Single.just("Hi");
+
+        final Object expectedResult = new Object();
+        final AtomicReference<Single<?>> singleRef = new AtomicReference<Single<?>>();
+        Object actualResult = s.to(new Func1<Single<String>, Object>() {
+            @Override
+            public Object call(Single<String> single) {
+                singleRef.set(single);
+                return expectedResult;
+            }
+        });
+
+        assertSame(expectedResult, actualResult);
+        assertSame(s, singleRef.get());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void doOnEachNull() {
+        Single.just(1).doOnEach(null);
+    }
+
+    @Test
+    public void doOnEachError() {
+        final AtomicInteger atomicInteger = new AtomicInteger(0);
+        Single.error(new RuntimeException()).doOnEach(new Action1<Notification<?>>() {
+            @Override
+            public void call(final Notification<?> notification) {
+                if (notification.isOnError()) {
+                    atomicInteger.incrementAndGet();
+                }
+            }
+        }).subscribe(Actions.empty(), new Action1<Throwable>() {
+            @Override
+            public void call(final Throwable throwable) {
+                // Do nothing this is expected.
+            }
+        });
+
+        assertEquals(1, atomicInteger.get());
+    }
+
+    @Test
+    public void doOnEachSuccess() {
+        final AtomicInteger atomicInteger = new AtomicInteger(0);
+        Single.just(1).doOnEach(new Action1<Notification<? extends Integer>>() {
+            @Override
+            public void call(final Notification<? extends Integer> notification) {
+                if (notification.isOnNext()) {
+                    atomicInteger.getAndAdd(notification.getValue());
+                }
+            }
+        }).subscribe();
+
+        assertEquals(1, atomicInteger.get());
+    }
+
+    @Test
+    public void isUnsubscribedAfterSuccess() {
+        PublishSubject<Integer> ps = PublishSubject.create();
+
+        final int[] calls = { 0 };
+
+        Subscription s = ps.toSingle().subscribe(new Action1<Integer>() {
+            @Override
+            public void call(Integer t) {
+                calls[0]++;
+            }
+        });
+
+        assertFalse(s.isUnsubscribed());
+
+        ps.onNext(1);
+        ps.onCompleted();
+
+        assertTrue(s.isUnsubscribed());
+
+        assertEquals(1, calls[0]);
+    }
+
+    @Test
+    public void isUnsubscribedAfterError() {
+        PublishSubject<Integer> ps = PublishSubject.create();
+
+        final int[] calls = { 0 };
+
+        Action1<Integer> a = Actions.empty();
+
+        Subscription s = ps.toSingle().subscribe(a, new Action1<Throwable>() {
+            @Override
+            public void call(Throwable t) {
+                calls[0]++;
+            }
+        });
+
+        assertFalse(s.isUnsubscribed());
+
+        ps.onError(new TestException());
+
+        assertTrue(s.isUnsubscribed());
+
+        assertEquals(1, calls[0]);
     }
 }

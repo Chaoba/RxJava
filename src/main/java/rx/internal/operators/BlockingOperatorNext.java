@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,15 +15,12 @@
  */
 package rx.internal.operators;
 
-import java.util.Iterator;
-import java.util.NoSuchElementException;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
+import java.util.*;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import rx.Notification;
+import rx.*;
 import rx.Observable;
-import rx.Subscriber;
 import rx.exceptions.Exceptions;
 
 /**
@@ -40,6 +37,7 @@ public final class BlockingOperatorNext {
      * Returns an {@code Iterable} that blocks until the {@code Observable} emits another item, then returns
      * that item.
      *
+     * @param <T> the value type
      * @param items
      *            the {@code Observable} to observe
      * @return an {@code Iterable} that behaves like a blocking version of {@code items}
@@ -55,7 +53,7 @@ public final class BlockingOperatorNext {
 
     }
 
-    // test needs to access the observer.waiting flag non-blockingly.
+    // test needs to access the observer.waiting flag in a non-blocking fashion.
     /* private */static final class NextIterator<T> implements Iterator<T> {
 
         private final NextObserver<T> observer;
@@ -63,8 +61,8 @@ public final class BlockingOperatorNext {
         private T next;
         private boolean hasNext = true;
         private boolean isNextConsumed = true;
-        private Throwable error = null;
-        private boolean started = false;
+        private Throwable error;
+        private boolean started;
 
         NextIterator(Observable<? extends T> items, NextObserver<T> observer) {
             this.items = items;
@@ -83,22 +81,20 @@ public final class BlockingOperatorNext {
                 // the iterator has reached the end.
                 return false;
             }
-            if (!isNextConsumed) {
-                // next has not been used yet.
-                return true;
-            }
-            return moveToNext();
+            // next has not been used yet.
+            return !isNextConsumed || moveToNext();
         }
 
+        @SuppressWarnings("unchecked")
         private boolean moveToNext() {
             try {
                 if (!started) {
                     started = true;
                     // if not started, start now
                     observer.setWaiting(1);
-                    items.materialize().subscribe(observer);
+                    ((Observable<T>)items).materialize().subscribe(observer);
                 }
-                
+
                 Notification<? extends T> nextNotification = observer.takeNext();
                 if (nextNotification.isOnNext()) {
                     isNextConsumed = false;
@@ -120,7 +116,7 @@ public final class BlockingOperatorNext {
                 observer.unsubscribe();
                 Thread.currentThread().interrupt();
                 error = e;
-                throw Exceptions.propagate(error);
+                throw Exceptions.propagate(e);
             }
         }
 
@@ -145,12 +141,9 @@ public final class BlockingOperatorNext {
         }
     }
 
-    private static class NextObserver<T> extends Subscriber<Notification<? extends T>> {
+    static final class NextObserver<T> extends Subscriber<Notification<? extends T>> {
         private final BlockingQueue<Notification<? extends T>> buf = new ArrayBlockingQueue<Notification<? extends T>>(1);
         final AtomicInteger waiting = new AtomicInteger();
-
-        NextObserver() {
-        }
 
         @Override
         public void onCompleted() {

@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,38 +15,27 @@
  */
 package rx.internal.operators;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyString;
-import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
+import static org.junit.Assert.*;
+import static org.mockito.Matchers.*;
+import static org.mockito.Mockito.*;
 
-import java.util.Arrays;
-import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.lang.ref.WeakReference;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
 
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 import org.mockito.InOrder;
 
+import rx.*;
 import rx.Observable;
 import rx.Observer;
-import rx.Producer;
-import rx.Scheduler;
-import rx.Subscriber;
-import rx.exceptions.TestException;
-import rx.functions.Action0;
-import rx.functions.Action1;
-import rx.functions.Func1;
+import rx.exceptions.*;
+import rx.functions.*;
+import rx.internal.util.UtilityFunctions;
 import rx.observers.TestSubscriber;
-import rx.schedulers.TestScheduler;
+import rx.schedulers.*;
+import rx.subjects.PublishSubject;
 
 public class OperatorSwitchTest {
 
@@ -544,7 +533,7 @@ public class OperatorSwitchTest {
     @Test
     public void testIssue2654() {
         Observable<String> oneItem = Observable.just("Hello").mergeWith(Observable.<String>never());
-        
+
         Observable<String> src = oneItem.switchMap(new Func1<String, Observable<String>>() {
             @Override
             public Observable<String> call(final String s) {
@@ -560,7 +549,7 @@ public class OperatorSwitchTest {
         })
         .share()
         ;
-        
+
         TestSubscriber<String> ts = new TestSubscriber<String>() {
             @Override
             public void onNext(String t) {
@@ -572,17 +561,17 @@ public class OperatorSwitchTest {
             }
         };
         src.subscribe(ts);
-        
+
         ts.awaitTerminalEvent(10, TimeUnit.SECONDS);
-        
+
         System.out.println("> testIssue2654: " + ts.getOnNextEvents().size());
-        
+
         ts.assertTerminalEvent();
         ts.assertNoErrors();
-        
+
         Assert.assertEquals(250, ts.getOnNextEvents().size());
     }
-    
+
     @Test(timeout = 10000)
     public void testInitialRequestsAreAdditive() {
         TestSubscriber<Long> ts = new TestSubscriber<Long>(0);
@@ -601,7 +590,7 @@ public class OperatorSwitchTest {
         ts.requestMore(1);
         ts.awaitTerminalEvent();
     }
-    
+
     @Test(timeout = 10000)
     public void testInitialRequestsDontOverflow() {
         TestSubscriber<Long> ts = new TestSubscriber<Long>(0);
@@ -618,8 +607,8 @@ public class OperatorSwitchTest {
         ts.awaitTerminalEvent();
         assertTrue(ts.getOnNextEvents().size() > 0);
     }
-    
-    
+
+
     @Test(timeout = 10000)
     public void testSecondaryRequestsDontOverflow() throws InterruptedException {
         TestSubscriber<Long> ts = new TestSubscriber<Long>(0);
@@ -639,7 +628,7 @@ public class OperatorSwitchTest {
         ts.awaitTerminalEvent();
         ts.assertValueCount(7);
     }
-    
+
     @Test(timeout = 10000)
     public void testSecondaryRequestsAdditivelyAreMoreThanLongMaxValueInducesMaxValueRequestFromUpstream()
             throws InterruptedException {
@@ -667,8 +656,257 @@ public class OperatorSwitchTest {
         ts.requestMore(Long.MAX_VALUE - 1);
         ts.awaitTerminalEvent();
         assertTrue(ts.getOnNextEvents().size() > 0);
-        assertEquals(5, (int) requests.size());
+        assertEquals(4, requests.size()); // depends on the request pattern
         assertEquals(Long.MAX_VALUE, (long) requests.get(requests.size()-1));
     }
 
+    @Test
+    public void mainError() {
+        TestSubscriber<Integer> ts = TestSubscriber.create();
+
+        PublishSubject<Integer> source = PublishSubject.create();
+
+        source.switchMapDelayError(new Func1<Integer, Observable<Integer>>() {
+            @Override
+            public Observable<Integer> call(Integer v) {
+                return Observable.range(v, 2);
+            }
+        }).subscribe(ts);
+
+        source.onNext(1);
+        source.onNext(2);
+        source.onError(new TestException());
+
+        ts.assertValues(1, 2, 2, 3);
+        ts.assertError(TestException.class);
+        ts.assertNotCompleted();
+    }
+
+    @Test
+    public void innerError() {
+        TestSubscriber<Integer> ts = TestSubscriber.create();
+
+        Observable.range(0, 3).switchMapDelayError(new Func1<Integer, Observable<Integer>>() {
+            @Override
+            public Observable<Integer> call(Integer v) {
+                return v == 1 ? Observable.<Integer>error(new TestException()) : Observable.range(v, 2);
+            }
+        }).subscribe(ts);
+
+        ts.assertValues(0, 1, 2, 3);
+        ts.assertError(TestException.class);
+        ts.assertNotCompleted();
+    }
+
+    @Test
+    public void innerAllError() {
+        TestSubscriber<Integer> ts = TestSubscriber.create();
+
+        Observable.range(0, 3).switchMapDelayError(new Func1<Integer, Observable<Integer>>() {
+            @Override
+            public Observable<Integer> call(Integer v) {
+                return Observable.range(v, 2).concatWith(Observable.<Integer>error(new TestException()));
+            }
+        }).subscribe(ts);
+
+        ts.assertValues(0, 1, 1, 2, 2, 3);
+        ts.assertError(CompositeException.class);
+        ts.assertNotCompleted();
+
+        List<Throwable> exceptions = ((CompositeException)ts.getOnErrorEvents().get(0)).getExceptions();
+
+        assertEquals(3, exceptions.size());
+
+        for (Throwable ex : exceptions) {
+            assertTrue(ex.toString(), ex instanceof TestException);
+        }
+    }
+
+    @Test
+    public void backpressure() {
+        TestSubscriber<Integer> ts = TestSubscriber.create(0);
+
+        Observable.range(0, 3).switchMapDelayError(new Func1<Integer, Observable<Integer>>() {
+            @Override
+            public Observable<Integer> call(Integer v) {
+                return Observable.range(v, 2);
+            }
+        }).subscribe(ts);
+
+        ts.assertNoValues();
+        ts.assertNoErrors();
+        ts.assertNotCompleted();
+
+        ts.requestMore(2);
+
+        ts.assertValues(2, 3);
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @Test
+    public void backpressureWithSwitch() {
+        TestSubscriber<Integer> ts = TestSubscriber.create(0);
+
+        PublishSubject<Integer> source = PublishSubject.create();
+
+        source.switchMapDelayError(new Func1<Integer, Observable<Integer>>() {
+            @Override
+            public Observable<Integer> call(Integer v) {
+                return Observable.range(v, 2);
+            }
+        }).subscribe(ts);
+
+        ts.assertNoValues();
+        ts.assertNoErrors();
+        ts.assertNotCompleted();
+
+        ts.requestMore(1);
+
+        source.onNext(0);
+
+        ts.assertValues(0);
+        ts.assertNoErrors();
+        ts.assertNotCompleted();
+
+        source.onNext(1);
+
+        ts.assertValues(0);
+        ts.assertNoErrors();
+        ts.assertNotCompleted();
+
+        ts.requestMore(1);
+
+        ts.assertValues(0, 1);
+        ts.assertNoErrors();
+        ts.assertNotCompleted();
+
+        source.onNext(2);
+
+        ts.requestMore(2);
+
+        source.onCompleted();
+
+        ts.assertValues(0, 1, 2, 3);
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    Object ref;
+
+    @Test
+    public void producerIsNotRetained() throws Exception {
+        ref = new Object();
+
+        WeakReference<Object> wr = new WeakReference<Object>(ref);
+
+        PublishSubject<Observable<Object>> ps = PublishSubject.create();
+
+        Subscriber<Object> observer = new Subscriber<Object>() {
+            @Override
+            public void onCompleted() {
+            }
+
+            @Override
+            public void onError(Throwable e) {
+            }
+
+            @Override
+            public void onNext(Object t) {
+            }
+        };
+
+        Observable.switchOnNext(ps).subscribe(observer);
+
+        ps.onNext(Observable.just(ref));
+
+        ref = null;
+
+        System.gc();
+
+        Thread.sleep(500);
+
+        Assert.assertNotNull(observer); // retain every other referenec in the pipeline
+        Assert.assertNotNull(ps);
+        Assert.assertNull("Object retained!", wr.get());
+    }
+
+    @Test
+    public void switchAsyncHeavily() {
+        for (int i = 1; i < 1024; i *= 2) {
+            System.out.println("switchAsyncHeavily >> " + i);
+
+            final Queue<Throwable> q = new ConcurrentLinkedQueue<Throwable>();
+
+            final long[] lastSeen = { 0L };
+
+            final int j = i;
+            TestSubscriber<Integer> ts = new TestSubscriber<Integer>(i) {
+                int count;
+                @Override
+                public void onNext(Integer t) {
+                    super.onNext(t);
+                    lastSeen[0] = System.currentTimeMillis();
+                    if (++count == j) {
+                        count = 0;
+                        requestMore(j);
+                    }
+                }
+            };
+
+            Observable.range(1, 10000)
+            .observeOn(Schedulers.computation(), i)
+            .switchMap(new Func1<Integer, Observable<Integer>>() {
+                @Override
+                public Observable<Integer> call(Integer v) {
+                    return Observable.range(1, 1000).observeOn(Schedulers.computation(), j)
+                            .doOnError(new Action1<Throwable>() {
+                                @Override
+                                public void call(Throwable e) {
+                                    q.add(e);
+                                }
+                            });
+                }
+            })
+            .timeout(30, TimeUnit.SECONDS)
+            .subscribe(ts);
+
+            ts.awaitTerminalEvent(60, TimeUnit.SECONDS);
+            if (!q.isEmpty()) {
+                AssertionError ae = new AssertionError("Dropped exceptions");
+                ae.initCause(new CompositeException(q));
+                throw ae;
+            }
+            ts.assertNoErrors();
+            if (ts.getCompletions() == 0) {
+                fail("switchAsyncHeavily timed out @ " + j + " (" + ts.getOnNextEvents().size() + " onNexts received, last was " + (System.currentTimeMillis() - lastSeen[0]) + " ms ago");
+            }
+        }
+    }
+
+    @Test
+    public void asyncInner() throws Throwable {
+        for (int i = 0; i < 100; i++) {
+
+            final AtomicReference<Throwable> error = new AtomicReference<Throwable>();
+
+            Observable.just(Observable.range(1, 1000 * 1000).subscribeOn(Schedulers.computation()))
+            .switchMap(UtilityFunctions.<Observable<Integer>>identity())
+            .observeOn(Schedulers.computation())
+            .ignoreElements()
+            .timeout(5, TimeUnit.SECONDS)
+            .toBlocking()
+            .subscribe(Actions.empty(), new Action1<Throwable>() {
+                @Override
+                public void call(Throwable e) {
+                    error.set(e);
+                }
+            });
+
+            Throwable ex = error.get();
+            if (ex != null) {
+                throw ex;
+            }
+        }
+    }
 }

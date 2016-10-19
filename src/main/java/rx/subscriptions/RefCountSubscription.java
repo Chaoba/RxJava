@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -29,7 +29,7 @@ public final class RefCountSubscription implements Subscription {
     static final State EMPTY_STATE = new State(false, 0);
     final AtomicReference<State> state = new AtomicReference<State>(EMPTY_STATE);
 
-    private static final class State {
+    static final class State {
         final boolean isUnsubscribed;
         final int children;
 
@@ -54,7 +54,7 @@ public final class RefCountSubscription implements Subscription {
 
     /**
      * Creates a {@code RefCountSubscription} by wrapping the given non-null {@code Subscription}.
-     * 
+     *
      * @param s
      *          the {@link Subscription} to wrap
      * @throws IllegalArgumentException
@@ -125,7 +125,10 @@ public final class RefCountSubscription implements Subscription {
     }
 
     /** The individual sub-subscriptions. */
-    private static final class InnerSubscription extends AtomicInteger implements Subscription {
+    static final class InnerSubscription extends AtomicInteger implements Subscription {
+        /** */
+        private static final long serialVersionUID = 7005765588239987643L;
+
         final RefCountSubscription parent;
         public InnerSubscription(RefCountSubscription parent) {
             this.parent = parent;

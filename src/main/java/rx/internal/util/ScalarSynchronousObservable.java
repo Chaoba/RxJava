@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -23,7 +23,7 @@ import rx.functions.*;
 import rx.internal.producers.SingleProducer;
 import rx.internal.schedulers.EventLoopsScheduler;
 import rx.observers.Subscribers;
-import rx.schedulers.Schedulers;
+import rx.plugins.*;
 
 /**
  * An Observable that emits a single constant scalar value to Subscribers.
@@ -34,22 +34,12 @@ import rx.schedulers.Schedulers;
  * @param <T> the value type
  */
 public final class ScalarSynchronousObservable<T> extends Observable<T> {
-
-    /**
-     * We expect the Schedulers.computation() to return an EventLoopsScheduler all the time.
-     */
-    static final Func1<Action0, Subscription> COMPUTATION_ONSCHEDULE = new Func1<Action0, Subscription>() {
-        final EventLoopsScheduler els = (EventLoopsScheduler)Schedulers.computation();
-        
-        @Override
-        public Subscription call(Action0 t) {
-            return els.scheduleDirect(t);
-        }
-    };
+    /** The constant scalar value to emit on request. */
+    final T t;
 
     /**
      * Indicates that the Producer used by this Observable should be fully
-     * threadsafe. It is possible, but unlikely that multiple concurrent
+     * thread-safe. It is possible, but unlikely that multiple concurrent
      * requests will arrive to just().
      */
     static final boolean STRONG_MODE;
@@ -71,7 +61,7 @@ public final class ScalarSynchronousObservable<T> extends Observable<T> {
         }
         return new WeakSingleProducer<T>(s, v);
     }
-    
+
     /**
      * Constructs a ScalarSynchronousObservable with the given constant value.
      * @param <T> the value type
@@ -82,18 +72,8 @@ public final class ScalarSynchronousObservable<T> extends Observable<T> {
         return new ScalarSynchronousObservable<T>(t);
     }
 
-    /** The constant scalar value to emit on request. */
-    final T t;
-
     protected ScalarSynchronousObservable(final T t) {
-        super(new OnSubscribe<T>() {
-
-            @Override
-            public void call(Subscriber<? super T> s) {
-                s.setProducer(createProducer(s, t));
-            }
-
-        });
+        super(RxJavaHooks.onCreate(new JustOnSubscribe<T>(t)));
         this.t = t;
     }
 
@@ -104,8 +84,8 @@ public final class ScalarSynchronousObservable<T> extends Observable<T> {
     public T get() {
         return t;
     }
-    
-    
+
+
     /**
      * Customized observeOn/subscribeOn implementation which emits the scalar
      * value directly or with less overhead on the specified scheduler.
@@ -113,9 +93,15 @@ public final class ScalarSynchronousObservable<T> extends Observable<T> {
      * @return the new observable
      */
     public Observable<T> scalarScheduleOn(final Scheduler scheduler) {
-        final Func1<Action0, Subscription> onSchedule;
+        Func1<Action0, Subscription> onSchedule;
         if (scheduler instanceof EventLoopsScheduler) {
-            onSchedule = COMPUTATION_ONSCHEDULE;
+            final EventLoopsScheduler els = (EventLoopsScheduler) scheduler;
+            onSchedule = new Func1<Action0, Subscription>() {
+                @Override
+                public Subscription call(Action0 a) {
+                    return els.scheduleDirect(a);
+                }
+            };
         } else {
             onSchedule = new Func1<Action0, Subscription>() {
                 @Override
@@ -135,10 +121,24 @@ public final class ScalarSynchronousObservable<T> extends Observable<T> {
                 }
             };
         }
-        
+
         return create(new ScalarAsyncOnSubscribe<T>(t, onSchedule));
     }
-    
+
+    /** The OnSubscribe callback for the Observable constructor. */
+    static final class JustOnSubscribe<T> implements OnSubscribe<T> {
+        final T value;
+
+        JustOnSubscribe(T value) {
+            this.value = value;
+        }
+
+        @Override
+        public void call(Subscriber<? super T> s) {
+            s.setProducer(createProducer(s, value));
+        }
+    }
+
     /**
      * The OnSubscribe implementation that creates the ScalarAsyncProducer for each
      * incoming subscriber.
@@ -172,7 +172,7 @@ public final class ScalarSynchronousObservable<T> extends Observable<T> {
         final Subscriber<? super T> actual;
         final T value;
         final Func1<Action0, Subscription> onSchedule;
-        
+
         public ScalarAsyncProducer(Subscriber<? super T> actual, T value, Func1<Action0, Subscription> onSchedule) {
             this.actual = actual;
             this.value = value;
@@ -188,7 +188,7 @@ public final class ScalarSynchronousObservable<T> extends Observable<T> {
                 actual.add(onSchedule.call(this));
             }
         }
-        
+
         @Override
         public void call() {
             Subscriber<? super T> a = actual;
@@ -207,13 +207,13 @@ public final class ScalarSynchronousObservable<T> extends Observable<T> {
             }
             a.onCompleted();
         }
-        
+
         @Override
         public String toString() {
             return "ScalarAsyncProducer[" + value + ", " + get() + "]";
         }
     }
-    
+
     /**
      * Given this scalar source as input to a flatMap, avoid one step of subscription
      * and subscribes to the single Observable returned by the function.
@@ -237,10 +237,10 @@ public final class ScalarSynchronousObservable<T> extends Observable<T> {
             }
         });
     }
-    
+
     /**
      * This is the weak version of SingleProducer that uses plain fields
-     * to avoid reentrancy and as such is not threadsafe for concurrent
+     * to avoid re-entrant invocation and as such is not thread-safe for concurrent
      * request() calls.
      *
      * @param <T> the value type
@@ -249,12 +249,12 @@ public final class ScalarSynchronousObservable<T> extends Observable<T> {
         final Subscriber<? super T> actual;
         final T value;
         boolean once;
-        
+
         public WeakSingleProducer(Subscriber<? super T> actual, T value) {
             this.actual = actual;
             this.value = value;
         }
-        
+
         @Override
         public void request(long n) {
             if (once) {
@@ -263,25 +263,26 @@ public final class ScalarSynchronousObservable<T> extends Observable<T> {
             if (n < 0L) {
                 throw new IllegalStateException("n >= required but it was " + n);
             }
-            if (n != 0L) {
-                once = true;
-                Subscriber<? super T> a = actual;
-                if (a.isUnsubscribed()) {
-                    return;
-                }
-                T v = value;
-                try {
-                    a.onNext(v);
-                } catch (Throwable e) {
-                    Exceptions.throwOrReport(e, a, v);
-                    return;
-                }
-                
-                if (a.isUnsubscribed()) {
-                    return;
-                }
-                a.onCompleted();
+            if (n == 0L) {
+                return;
             }
+            once = true;
+            Subscriber<? super T> a = actual;
+            if (a.isUnsubscribed()) {
+                return;
+            }
+            T v = value;
+            try {
+                a.onNext(v);
+            } catch (Throwable e) {
+                Exceptions.throwOrReport(e, a, v);
+                return;
+            }
+
+            if (a.isUnsubscribed()) {
+                return;
+            }
+            a.onCompleted();
         }
     }
 }

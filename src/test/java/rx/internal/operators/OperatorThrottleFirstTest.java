@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -19,6 +19,8 @@ import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import java.util.concurrent.TimeUnit;
 
@@ -33,6 +35,7 @@ import rx.Scheduler;
 import rx.Subscriber;
 import rx.exceptions.TestException;
 import rx.functions.Action0;
+import rx.observers.TestSubscriber;
 import rx.schedulers.TestScheduler;
 import rx.subjects.PublishSubject;
 
@@ -157,5 +160,58 @@ public class OperatorThrottleFirstTest {
         inOrder.verify(observer).onNext(7);
         inOrder.verify(observer).onCompleted();
         inOrder.verifyNoMoreInteractions();
+    }
+
+    @Test
+    public void timed() {
+
+        TestSubscriber<Integer> ts = TestSubscriber.create();
+
+        Observable.range(1, 2).throttleFirst(1, TimeUnit.SECONDS).subscribe(ts);
+
+        ts.awaitTerminalEventAndUnsubscribeOnTimeout(5, TimeUnit.SECONDS);
+        ts.assertValue(1);
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @Test
+    public void throttleWithoutAdvancingTimeOfTestScheduler() {
+        @SuppressWarnings("unchecked")
+        Observer<Integer> observer = mock(Observer.class);
+        TestScheduler s = new TestScheduler();
+        PublishSubject<Integer> o = PublishSubject.create();
+        o.throttleFirst(500, TimeUnit.MILLISECONDS, s).subscribe(observer);
+
+        // send events without calling advanceTimeBy/To
+        o.onNext(1); // deliver
+        o.onNext(2); // skip
+        o.onNext(3); // skip
+        o.onCompleted();
+
+        verify(observer).onNext(1);
+        verify(observer).onCompleted();
+        verifyNoMoreInteractions(observer);
+    }
+
+    @Test
+    public void throttleWithTestSchedulerTimeOfZero() {
+        @SuppressWarnings("unchecked")
+        Observer<Integer> observer = mock(Observer.class);
+        TestScheduler s = new TestScheduler();
+        PublishSubject<Integer> o = PublishSubject.create();
+        o.throttleFirst(500, TimeUnit.MILLISECONDS, s).subscribe(observer);
+
+        s.advanceTimeBy(0, TimeUnit.MILLISECONDS);
+
+        // send events while TestScheduler's time is 0
+        o.onNext(1); // deliver
+        o.onNext(2); // skip
+        o.onNext(3); // skip
+        o.onCompleted();
+
+        verify(observer).onNext(1);
+        verify(observer).onCompleted();
+        verifyNoMoreInteractions(observer);
     }
 }

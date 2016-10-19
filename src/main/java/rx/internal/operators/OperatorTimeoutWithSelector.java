@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,13 +15,9 @@
  */
 package rx.internal.operators;
 
-import rx.Observable;
-import rx.Scheduler;
-import rx.Subscriber;
-import rx.Subscription;
+import rx.*;
 import rx.exceptions.Exceptions;
-import rx.functions.Func0;
-import rx.functions.Func1;
+import rx.functions.*;
 import rx.schedulers.Schedulers;
 import rx.subscriptions.Subscriptions;
 
@@ -30,6 +26,9 @@ import rx.subscriptions.Subscriptions;
  * item emitted by the source Observable or any subsequent item don't arrive
  * within time windows defined by provided Observables, switch to the
  * <code>other</code> Observable if provided, or emit a TimeoutException .
+ * @param <T> the value type of the main Observable
+ * @param <U> the value type of the first timeout Observable
+ * @param <V> the value type of the subsequent timeout Observable
  */
 public class OperatorTimeoutWithSelector<T, U, V> extends
         OperatorTimeoutBase<T> {
@@ -45,7 +44,7 @@ public class OperatorTimeoutWithSelector<T, U, V> extends
                     final TimeoutSubscriber<T> timeoutSubscriber,
                     final Long seqId, Scheduler.Worker inner) {
                 if (firstTimeoutSelector != null) {
-                    Observable<U> o = null;
+                    Observable<U> o;
                     try {
                         o = firstTimeoutSelector.call();
                     } catch (Throwable t) {
@@ -80,7 +79,7 @@ public class OperatorTimeoutWithSelector<T, U, V> extends
             public Subscription call(
                     final TimeoutSubscriber<T> timeoutSubscriber,
                     final Long seqId, T value, Scheduler.Worker inner) {
-                Observable<V> o = null;
+                Observable<V> o;
                 try {
                     o = timeoutSelector.call(value);
                 } catch (Throwable t) {

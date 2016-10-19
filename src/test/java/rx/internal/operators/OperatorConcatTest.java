@@ -1,12 +1,12 @@
 /**
  * Copyright 2014 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -15,34 +15,27 @@
  */
 package rx.internal.operators;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyString;
-import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
+import static org.junit.Assert.*;
+import static org.mockito.Matchers.*;
+import static org.mockito.Mockito.*;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.lang.reflect.Method;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 
 import org.junit.Test;
 import org.mockito.InOrder;
 
-import rx.Observable.OnSubscribe;
 import rx.*;
-import rx.functions.Func1;
-import rx.internal.util.RxRingBuffer;
+import rx.Observable;
+import rx.Observable.OnSubscribe;
+import rx.Observer;
+import rx.functions.*;
+import rx.internal.util.*;
 import rx.observers.TestSubscriber;
-import rx.schedulers.Schedulers;
-import rx.schedulers.TestScheduler;
-import rx.subjects.Subject;
+import rx.schedulers.*;
+import rx.subjects.*;
 import rx.subscriptions.BooleanSubscription;
 
 public class OperatorConcatTest {
@@ -81,6 +74,34 @@ public class OperatorConcatTest {
         concat.subscribe(observer);
 
         verify(observer, times(7)).onNext(anyString());
+    }
+
+    @Test
+    public void testConcatMapIterable() {
+        @SuppressWarnings("unchecked")
+        Observer<String> observer = mock(Observer.class);
+
+        final String[] l = { "a", "b", "c", "d", "e" };
+
+        Func1<List<String>,List<String>> identity = new Func1<List<String>, List<String>>() {
+			@Override
+			public List<String> call(List<String> t) {
+				return t;
+			}
+		};
+
+        final Observable<List<String>> listObs = Observable.just(Arrays.asList(l));
+        final Observable<String> concatMap = listObs.concatMapIterable(identity);
+
+        concatMap.subscribe(observer);
+
+        InOrder inOrder = inOrder(observer);
+        inOrder.verify(observer, times(1)).onNext("a");
+        inOrder.verify(observer, times(1)).onNext("b");
+        inOrder.verify(observer, times(1)).onNext("c");
+        inOrder.verify(observer, times(1)).onNext("d");
+        inOrder.verify(observer, times(1)).onNext("e");
+        inOrder.verify(observer, times(1)).onCompleted();
     }
 
     @Test
@@ -144,6 +165,7 @@ public class OperatorConcatTest {
 
     /**
      * Test an async Observable that emits more async Observables
+     * @throws Throwable on any error
      */
     @SuppressWarnings("unchecked")
     @Test
@@ -393,7 +415,7 @@ public class OperatorConcatTest {
             Subscription s1 = concat.subscribe(observer);
             //Block main thread to allow observable "w1" to complete and observable "w2" to call onNext once.
             callOnce.await();
-            // Unsubcribe
+            // Unsubscribe
             s1.unsubscribe();
             //Unblock the observable to continue.
             okToContinue.countDown();
@@ -588,7 +610,7 @@ public class OperatorConcatTest {
         verify(o1, never()).onError(any(Throwable.class));
         verify(o2, never()).onError(any(Throwable.class));
     }
-    
+
     @Test
     public void concatVeryLongObservableOfObservables() {
         final int n = 10000;
@@ -604,13 +626,13 @@ public class OperatorConcatTest {
                 s.onCompleted();
             }
         });
-        
+
         Observable<List<Integer>> result = Observable.concat(source).toList();
-        
+
         @SuppressWarnings("unchecked")
         Observer<List<Integer>> o = mock(Observer.class);
         InOrder inOrder = inOrder(o);
-        
+
         result.subscribe(o);
 
         List<Integer> list = new ArrayList<Integer>(n);
@@ -636,13 +658,13 @@ public class OperatorConcatTest {
                 s.onCompleted();
             }
         });
-        
+
         Observable<List<Integer>> result = Observable.concat(source).take(n / 2).toList();
-        
+
         @SuppressWarnings("unchecked")
         Observer<List<Integer>> o = mock(Observer.class);
         InOrder inOrder = inOrder(o);
-        
+
         result.subscribe(o);
 
         List<Integer> list = new ArrayList<Integer>(n);
@@ -653,7 +675,7 @@ public class OperatorConcatTest {
         inOrder.verify(o).onCompleted();
         verify(o, never()).onError(any(Throwable.class));
     }
-    
+
     @Test
     public void testConcatOuterBackpressure() {
         assertEquals(1,
@@ -662,7 +684,7 @@ public class OperatorConcatTest {
                         .take(1)
                         .toBlocking().single());
     }
-    
+
     @Test
     public void testInnerBackpressureWithAlignedBoundaries() {
         TestSubscriber<Integer> ts = new TestSubscriber<Integer>();
@@ -679,7 +701,7 @@ public class OperatorConcatTest {
     /*
      * Testing without counts aligned with buffer sizes because concat must prevent the subscription
      * to the next Observable if request == 0 which can happen at the end of a subscription
-     * if the request size == emitted size. It needs to delay subscription until the next request when aligned, 
+     * if the request size == emitted size. It needs to delay subscription until the next request when aligned,
      * when not aligned, it just subscribesNext with the outstanding request amount.
      */
     @Test
@@ -694,7 +716,7 @@ public class OperatorConcatTest {
         ts.assertNoErrors();
         assertEquals((RxRingBuffer.SIZE * 4) + 20, ts.getOnNextEvents().size());
     }
-    
+
     // https://github.com/ReactiveX/RxJava/issues/1818
     @Test
     public void testConcatWithNonCompliantSourceDoubleOnComplete() {
@@ -706,9 +728,9 @@ public class OperatorConcatTest {
                 s.onCompleted();
                 s.onCompleted();
             }
-            
+
         });
-        
+
         TestSubscriber<String> ts = new TestSubscriber<String>();
         Observable.concat(o, o).subscribe(ts);
         ts.awaitTerminalEvent(500, TimeUnit.MILLISECONDS);
@@ -764,10 +786,10 @@ public class OperatorConcatTest {
         });
 
         executor.awaitTermination(12000, TimeUnit.MILLISECONDS);
-        
+
         assertEquals(n, counter.get());
     }
-    
+
     @Test
     public void testRequestOverflowDoesNotStallStream() {
         Observable<Integer> o1 = Observable.just(1,2,3);
@@ -782,17 +804,17 @@ public class OperatorConcatTest {
 
             @Override
             public void onError(Throwable e) {
-                
+
             }
 
             @Override
             public void onNext(Integer t) {
                 request(2);
             }});
-        
+
         assertTrue(completed.get());
     }
-    
+
     @Test//(timeout = 100000)
     public void concatMapRangeAsyncLoopIssue2876() {
         final long durationSeconds = 2;
@@ -821,5 +843,163 @@ public class OperatorConcatTest {
             assertEquals((Integer)999, ts.getOnNextEvents().get(999));
         }
     }
-    
+
+    @Test
+    public void scalarAndRangeBackpressured() {
+        TestSubscriber<Integer> ts = TestSubscriber.create(0);
+
+        Observable.just(1).concatWith(Observable.range(2, 3)).subscribe(ts);
+
+        ts.assertNoValues();
+
+        ts.requestMore(5);
+
+        ts.assertValues(1, 2, 3, 4);
+        ts.assertCompleted();
+        ts.assertNoErrors();
+    }
+
+    @Test
+    public void scalarAndEmptyBackpressured() {
+        TestSubscriber<Integer> ts = TestSubscriber.create(0);
+
+        Observable.just(1).concatWith(Observable.<Integer>empty()).subscribe(ts);
+
+        ts.assertNoValues();
+
+        ts.requestMore(5);
+
+        ts.assertValue(1);
+        ts.assertCompleted();
+        ts.assertNoErrors();
+    }
+
+    @Test
+    public void rangeAndEmptyBackpressured() {
+        TestSubscriber<Integer> ts = TestSubscriber.create(0);
+
+        Observable.range(1, 2).concatWith(Observable.<Integer>empty()).subscribe(ts);
+
+        ts.assertNoValues();
+
+        ts.requestMore(5);
+
+        ts.assertValues(1, 2);
+        ts.assertCompleted();
+        ts.assertNoErrors();
+    }
+
+    @Test
+    public void emptyAndScalarBackpressured() {
+        TestSubscriber<Integer> ts = TestSubscriber.create(0);
+
+        Observable.<Integer>empty().concatWith(Observable.just(1)).subscribe(ts);
+
+        ts.assertNoValues();
+
+        ts.requestMore(5);
+
+        ts.assertValue(1);
+        ts.assertCompleted();
+        ts.assertNoErrors();
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void concatMany() throws Exception {
+        for (int i = 2; i < 10; i++) {
+            Class<?>[] clazz = new Class[i];
+            Arrays.fill(clazz, Observable.class);
+
+            Observable<Integer>[] obs = new Observable[i];
+            Arrays.fill(obs, Observable.just(1));
+
+            Integer[] expected = new Integer[i];
+            Arrays.fill(expected, 1);
+
+            Method m = Observable.class.getMethod("concat", clazz);
+
+            TestSubscriber<Integer> ts = TestSubscriber.create();
+
+            ((Observable<Integer>)m.invoke(null, (Object[])obs)).subscribe(ts);
+
+            ts.assertValues(expected);
+            ts.assertNoErrors();
+            ts.assertCompleted();
+        }
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @Test
+    public void concatMapJustJust() {
+        TestSubscriber<Integer> ts = TestSubscriber.create();
+
+        Observable.just(Observable.just(1)).concatMap((Func1)UtilityFunctions.identity()).subscribe(ts);
+
+        ts.assertValue(1);
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @Test
+    public void concatMapJustRange() {
+        TestSubscriber<Integer> ts = TestSubscriber.create();
+
+        Observable.just(Observable.range(1, 5)).concatMap((Func1)UtilityFunctions.identity()).subscribe(ts);
+
+        ts.assertValues(1, 2, 3, 4, 5);
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @Test
+    public void concatMapDelayErrorJustJust() {
+        TestSubscriber<Integer> ts = TestSubscriber.create();
+
+        Observable.just(Observable.just(1)).concatMapDelayError((Func1)UtilityFunctions.identity()).subscribe(ts);
+
+        ts.assertValue(1);
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    @Test
+    public void concatMapDelayErrorJustRange() {
+        TestSubscriber<Integer> ts = TestSubscriber.create();
+
+        Observable.just(Observable.range(1, 5)).concatMapDelayError((Func1)UtilityFunctions.identity()).subscribe(ts);
+
+        ts.assertValues(1, 2, 3, 4, 5);
+        ts.assertNoErrors();
+        ts.assertCompleted();
+    }
+
+    @SuppressWarnings("unchecked")
+    @Test
+    public void startWith() throws Exception {
+        for (int i = 2; i < 10; i++) {
+            Class<?>[] clazz = new Class[i];
+            Arrays.fill(clazz, Object.class);
+
+            Object[] obs = new Object[i];
+            Arrays.fill(obs, 1);
+
+            Integer[] expected = new Integer[i];
+            Arrays.fill(expected, 1);
+
+            Method m = Observable.class.getMethod("startWith", clazz);
+
+            TestSubscriber<Integer> ts = TestSubscriber.create();
+
+            ((Observable<Integer>)m.invoke(Observable.empty(), obs)).subscribe(ts);
+
+            ts.assertValues(expected);
+            ts.assertNoErrors();
+            ts.assertCompleted();
+        }
+    }
+
 }

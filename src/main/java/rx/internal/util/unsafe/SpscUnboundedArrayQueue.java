@@ -2,15 +2,15 @@
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- * 
+ *
  * Original License: https://github.com/JCTools/JCTools/blob/master/LICENSE
  * Original location: https://github.com/JCTools/JCTools/blob/master/jctools-core/src/main/java/org/jctools/queues/SpscUnboundedArrayQueue.java
  */
@@ -21,6 +21,8 @@ import static rx.internal.util.unsafe.UnsafeAccess.*;
 import java.lang.reflect.Field;
 import java.util.AbstractQueue;
 import java.util.Iterator;
+
+import rx.internal.util.SuppressAnimalSniffer;
 
 abstract class SpscUnboundedArrayQueueProducerFields<E> extends AbstractQueue<E> {
     protected long producerIndex;
@@ -46,6 +48,7 @@ abstract class SpscUnboundedArrayQueueConsumerField<E> extends SpscUnboundedArra
     protected long consumerIndex;
 }
 
+@SuppressAnimalSniffer
 public class SpscUnboundedArrayQueue<E> extends SpscUnboundedArrayQueueConsumerField<E>
     implements QueueProgressIndicators{
     static final int MAX_LOOK_AHEAD_STEP = Integer.getInteger("jctools.spsc.max.lookahead.step", 4096);
@@ -69,13 +72,17 @@ public class SpscUnboundedArrayQueue<E> extends SpscUnboundedArrayQueueConsumerF
             Field iField = SpscUnboundedArrayQueueProducerFields.class.getDeclaredField("producerIndex");
             P_INDEX_OFFSET = UNSAFE.objectFieldOffset(iField);
         } catch (NoSuchFieldException e) {
-            throw new RuntimeException(e);
+            InternalError ex = new InternalError();
+            ex.initCause(e);
+            throw ex;
         }
         try {
             Field iField = SpscUnboundedArrayQueueConsumerField.class.getDeclaredField("consumerIndex");
             C_INDEX_OFFSET = UNSAFE.objectFieldOffset(iField);
         } catch (NoSuchFieldException e) {
-            throw new RuntimeException(e);
+            InternalError ex = new InternalError();
+            ex.initCause(e);
+            throw ex;
         }
     }
 
@@ -90,7 +97,7 @@ public class SpscUnboundedArrayQueue<E> extends SpscUnboundedArrayQueueConsumerF
         consumerBuffer = buffer;
         consumerMask = mask;
         producerLookAhead = mask - 1; // we know it's all empty to start with
-        soProducerIndex(0l);
+        soProducerIndex(0L);
     }
 
     @Override
@@ -132,8 +139,8 @@ public class SpscUnboundedArrayQueue<E> extends SpscUnboundedArrayQueueConsumerF
     }
 
     private boolean writeToQueue(final E[] buffer, final E e, final long index, final long offset) {
-        soProducerIndex(index + 1);// this ensures atomic write of long on 32bit platforms
         soElement(buffer, offset, e);// StoreStore
+        soProducerIndex(index + 1);// this ensures atomic write of long on 32bit platforms
         return true;
     }
 
@@ -144,11 +151,11 @@ public class SpscUnboundedArrayQueue<E> extends SpscUnboundedArrayQueueConsumerF
         final E[] newBuffer = (E[]) new Object[capacity];
         producerBuffer = newBuffer;
         producerLookAhead = currIndex + mask - 1;
-        soProducerIndex(currIndex + 1);// this ensures correctness on 32bit platforms
         soElement(newBuffer, offset, e);// StoreStore
         soNext(oldBuffer, newBuffer);
         soElement(oldBuffer, offset, HAS_NEXT); // new buffer is visible after element is
                                                                  // inserted
+        soProducerIndex(currIndex + 1);// this ensures correctness on 32bit platforms
     }
 
     private void soNext(E[] curr, E[] next) {
@@ -174,8 +181,8 @@ public class SpscUnboundedArrayQueue<E> extends SpscUnboundedArrayQueueConsumerF
         final Object e = lvElement(buffer, offset);// LoadLoad
         boolean isNextBuffer = e == HAS_NEXT;
         if (null != e && !isNextBuffer) {
-            soConsumerIndex(index + 1);// this ensures correctness on 32bit platforms
             soElement(buffer, offset, null);// StoreStore
+            soConsumerIndex(index + 1);// this ensures correctness on 32bit platforms
             return (E) e;
         } else if (isNextBuffer) {
             return newBufferPoll(lvNext(buffer), index, mask);
@@ -192,8 +199,8 @@ public class SpscUnboundedArrayQueue<E> extends SpscUnboundedArrayQueueConsumerF
         if (null == n) {
             return null;
         } else {
-            soConsumerIndex(index + 1);// this ensures correctness on 32bit platforms
             soElement(nextBuffer, offsetInNew, null);// StoreStore
+            soConsumerIndex(index + 1);// this ensures correctness on 32bit platforms
             return n;
         }
     }
@@ -277,12 +284,12 @@ public class SpscUnboundedArrayQueue<E> extends SpscUnboundedArrayQueueConsumerF
     private static <E> Object lvElement(E[] buffer, long offset) {
         return UNSAFE.getObjectVolatile(buffer, offset);
     }
-    
+
     @Override
     public long currentProducerIndex() {
         return lvProducerIndex();
     }
-    
+
     @Override
     public long currentConsumerIndex() {
         return lvConsumerIndex();

@@ -1,12 +1,12 @@
 /**
  * Copyright 2015 Netflix, Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -17,7 +17,7 @@
 package rx.observables;
 
 import java.util.*;
-import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import rx.*;
 import rx.Observable;
@@ -25,9 +25,9 @@ import rx.Observable.OnSubscribe;
 import rx.Observer;
 import rx.annotations.Experimental;
 import rx.functions.*;
-import rx.internal.operators.*;
-import rx.observers.*;
-import rx.plugins.RxJavaPlugins;
+import rx.internal.operators.BufferUntilSubscriber;
+import rx.observers.SerializedObserver;
+import rx.plugins.RxJavaHooks;
 import rx.subscriptions.CompositeSubscription;
 
 /**
@@ -39,7 +39,7 @@ import rx.subscriptions.CompositeSubscription;
  *
  * @param <S>
  *            the type of the user-define state used in {@link #generateState() generateState(S)} ,
- *            {@link #next(Object, Long, Subscriber) next(S, Long, Subscriber)}, and
+ *            {@link #next(Object, long, Observer) next(S, Long, Observer)}, and
  *            {@link #onUnsubscribe(Object) onUnsubscribe(S)}.
  * @param <T>
  *            the type of {@code Subscribers} that will be compatible with {@code this}.
@@ -48,11 +48,11 @@ import rx.subscriptions.CompositeSubscription;
 public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
 
     /**
-     * Executed once when subscribed to by a subscriber (via {@link OnSubscribe#call(Subscriber)})
+     * Executed once when subscribed to by a subscriber (via {@link #call(Subscriber)})
      * to produce a state value. This value is passed into {@link #next(Object, long, Observer)
      * next(S state, Observer <T> observer)} on the first iteration. Subsequent iterations of
      * {@code next} will receive the state returned by the previous invocation of {@code next}.
-     * 
+     *
      * @return the initial state value
      */
     protected abstract S generateState();
@@ -63,15 +63,15 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
      * {@code observer.onError(throwable)} or throw an Exception. To signal the end of a data stream
      * call {@code observer.onCompleted()}. Implementations of this method must follow the following
      * rules.
-     * 
+     *
      * <ul>
      * <li>Must not call {@code observer.onNext(t)} more than 1 time per invocation.</li>
      * <li>Must not call {@code observer.onNext(t)} concurrently.</li>
      * </ul>
-     * 
+     *
      * The value returned from an invocation of this method will be passed in as the {@code state}
      * argument of the next invocation of this method.
-     * 
+     *
      * @param state
      *            the state value (from {@link #generateState()} on the first invocation or the
      *            previous invocation of this method.
@@ -87,31 +87,33 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
     /**
      * Clean up behavior that is executed after the downstream subscriber's subscription is
      * unsubscribed. This method will be invoked exactly once.
-     * 
+     *
      * @param state
      *            the last state value returned from {@code next(S, Long, Observer)} or
      *            {@code generateState()} at the time when a terminal event is emitted from
      *            {@link #next(Object, long, Observer)} or unsubscribing.
      */
     protected void onUnsubscribe(S state) {
-
+        // default behavior is no-op
     }
 
     /**
      * Generates a synchronous {@link AsyncOnSubscribe} that calls the provided {@code next}
      * function to generate data to downstream subscribers.
-     * 
+     *
+     * @param <T> the type of the generated values
+     * @param <S> the type of the associated state with each Subscriber
      * @param generator
      *            generates the initial state value (see {@link #generateState()})
      * @param next
      *            produces data to the downstream subscriber (see
      *            {@link #next(Object, long, Observer) next(S, long, Observer)})
-     * @return an OnSubscribe that emits data in a protocol compatible with back-pressure.
+     * @return an AsyncOnSubscribe that emits data in a protocol compatible with back-pressure.
      */
     @Experimental
-    public static <S, T> OnSubscribe<T> createSingleState(Func0<? extends S> generator, 
+    public static <S, T> AsyncOnSubscribe<S, T> createSingleState(Func0<? extends S> generator,
             final Action3<? super S, Long, ? super Observer<Observable<? extends T>>> next) {
-        Func3<S, Long, ? super Observer<Observable<? extends T>>, S> nextFunc = 
+        Func3<S, Long, ? super Observer<Observable<? extends T>>, S> nextFunc =
                 new Func3<S, Long, Observer<Observable<? extends T>>, S>() {
                     @Override
                     public S call(S state, Long requested, Observer<Observable<? extends T>> subscriber) {
@@ -124,9 +126,11 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
     /**
      * Generates a synchronous {@link AsyncOnSubscribe} that calls the provided {@code next}
      * function to generate data to downstream subscribers.
-     * 
+     *
      * This overload creates a AsyncOnSubscribe without an explicit clean up step.
-     * 
+     *
+     * @param <T> the type of the generated values
+     * @param <S> the type of the associated state with each Subscriber
      * @param generator
      *            generates the initial state value (see {@link #generateState()})
      * @param next
@@ -134,14 +138,14 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
      *            {@link #next(Object, long, Observer) next(S, long, Observer)})
      * @param onUnsubscribe
      *            clean up behavior (see {@link #onUnsubscribe(Object) onUnsubscribe(S)})
-     * @return an OnSubscribe that emits data downstream in a protocol compatible with
+     * @return an AsyncOnSubscribe that emits data downstream in a protocol compatible with
      *         back-pressure.
      */
     @Experimental
-    public static <S, T> OnSubscribe<T> createSingleState(Func0<? extends S> generator, 
-            final Action3<? super S, Long, ? super Observer<Observable<? extends T>>> next, 
+    public static <S, T> AsyncOnSubscribe<S, T> createSingleState(Func0<? extends S> generator,
+            final Action3<? super S, Long, ? super Observer<Observable<? extends T>>> next,
             final Action1<? super S> onUnsubscribe) {
-        Func3<S, Long, Observer<Observable<? extends T>>, S> nextFunc = 
+        Func3<S, Long, Observer<Observable<? extends T>>, S> nextFunc =
                 new Func3<S, Long, Observer<Observable<? extends T>>, S>() {
                     @Override
                     public S call(S state, Long requested, Observer<Observable<? extends T>> subscriber) {
@@ -154,7 +158,9 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
     /**
      * Generates a synchronous {@link AsyncOnSubscribe} that calls the provided {@code next}
      * function to generate data to downstream subscribers.
-     * 
+     *
+     * @param <T> the type of the generated values
+     * @param <S> the type of the associated state with each Subscriber
      * @param generator
      *            generates the initial state value (see {@link #generateState()})
      * @param next
@@ -162,12 +168,12 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
      *            {@link #next(Object, long, Observer) next(S, long, Observer)})
      * @param onUnsubscribe
      *            clean up behavior (see {@link #onUnsubscribe(Object) onUnsubscribe(S)})
-     * @return an OnSubscribe that emits data downstream in a protocol compatible with
+     * @return an AsyncOnSubscribe that emits data downstream in a protocol compatible with
      *         back-pressure.
      */
     @Experimental
-    public static <S, T> OnSubscribe<T> createStateful(Func0<? extends S> generator, 
-            Func3<? super S, Long, ? super Observer<Observable<? extends T>>, ? extends S> next, 
+    public static <S, T> AsyncOnSubscribe<S, T> createStateful(Func0<? extends S> generator,
+            Func3<? super S, Long, ? super Observer<Observable<? extends T>>, ? extends S> next,
             Action1<? super S> onUnsubscribe) {
         return new AsyncOnSubscribeImpl<S, T>(generator, next, onUnsubscribe);
     }
@@ -175,17 +181,19 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
     /**
      * Generates a synchronous {@link AsyncOnSubscribe} that calls the provided {@code next}
      * function to generate data to downstream subscribers.
-     * 
+     *
+     * @param <T> the type of the generated values
+     * @param <S> the type of the associated state with each Subscriber
      * @param generator
      *            generates the initial state value (see {@link #generateState()})
      * @param next
      *            produces data to the downstream subscriber (see
      *            {@link #next(Object, long, Observer) next(S, long, Observer)})
-     * @return an OnSubscribe that emits data downstream in a protocol compatible with
+     * @return an AsyncOnSubscribe that emits data downstream in a protocol compatible with
      *         back-pressure.
      */
     @Experimental
-    public static <S, T> OnSubscribe<T> createStateful(Func0<? extends S> generator, 
+    public static <S, T> AsyncOnSubscribe<S, T> createStateful(Func0<? extends S> generator,
             Func3<? super S, Long, ? super Observer<Observable<? extends T>>, ? extends S> next) {
         return new AsyncOnSubscribeImpl<S, T>(generator, next);
     }
@@ -193,19 +201,20 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
     /**
      * Generates a synchronous {@link AsyncOnSubscribe} that calls the provided {@code next}
      * function to generate data to downstream subscribers.
-     * 
+     *
      * This overload creates a "state-less" AsyncOnSubscribe which does not have an explicit state
      * value. This should be used when the {@code next} function closes over it's state.
-     * 
+     *
+     * @param <T> the type of the generated values
      * @param next
      *            produces data to the downstream subscriber (see
      *            {@link #next(Object, long, Observer) next(S, long, Observer)})
-     * @return an OnSubscribe that emits data downstream in a protocol compatible with
+     * @return an AsyncOnSubscribe that emits data downstream in a protocol compatible with
      *         back-pressure.
      */
     @Experimental
-    public static <T> OnSubscribe<T> createStateless(final Action2<Long, ? super Observer<Observable<? extends T>>> next) {
-        Func3<Void, Long, Observer<Observable<? extends T>>, Void> nextFunc = 
+    public static <T> AsyncOnSubscribe<Void, T> createStateless(final Action2<Long, ? super Observer<Observable<? extends T>>> next) {
+        Func3<Void, Long, Observer<Observable<? extends T>>, Void> nextFunc =
                 new Func3<Void, Long, Observer<Observable<? extends T>>, Void>() {
                     @Override
                     public Void call(Void state, Long requested, Observer<Observable<? extends T>> subscriber) {
@@ -218,22 +227,23 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
     /**
      * Generates a synchronous {@link AsyncOnSubscribe} that calls the provided {@code next}
      * function to generate data to downstream subscribers.
-     * 
+     *
      * This overload creates a "state-less" AsyncOnSubscribe which does not have an explicit state
      * value. This should be used when the {@code next} function closes over it's state.
-     * 
+     *
+     * @param <T> the type of the generated values
      * @param next
      *            produces data to the downstream subscriber (see
      *            {@link #next(Object, long, Observer) next(S, long, Observer)})
      * @param onUnsubscribe
      *            clean up behavior (see {@link #onUnsubscribe(Object) onUnsubscribe(S)})
-     * @return an OnSubscribe that emits data downstream in a protocol compatible with
+     * @return an AsyncOnSubscribe that emits data downstream in a protocol compatible with
      *         back-pressure.
      */
     @Experimental
-    public static <T> OnSubscribe<T> createStateless(final Action2<Long, ? super Observer<Observable<? extends T>>> next, 
+    public static <T> AsyncOnSubscribe<Void, T> createStateless(final Action2<Long, ? super Observer<Observable<? extends T>>> next,
             final Action0 onUnsubscribe) {
-        Func3<Void, Long, Observer<Observable<? extends T>>, Void> nextFunc = 
+        Func3<Void, Long, Observer<Observable<? extends T>>, Void> nextFunc =
                 new Func3<Void, Long, Observer<Observable<? extends T>>, Void>() {
                     @Override
                     public Void call(Void state, Long requested, Observer<Observable<? extends T>> subscriber) {
@@ -259,7 +269,7 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
      * @param <T>
      *            the type of compatible Subscribers
      */
-    private static final class AsyncOnSubscribeImpl<S, T> extends AsyncOnSubscribe<S, T> {
+    static final class AsyncOnSubscribeImpl<S, T> extends AsyncOnSubscribe<S, T> {
         private final Func0<? extends S> generator;
         private final Func3<? super S, Long, ? super Observer<Observable<? extends T>>, ? extends S> next;
         private final Action1<? super S> onUnsubscribe;
@@ -294,8 +304,9 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
 
         @Override
         protected void onUnsubscribe(S state) {
-            if (onUnsubscribe != null)
+            if (onUnsubscribe != null) {
                 onUnsubscribe.call(state);
+            }
         }
     }
 
@@ -309,38 +320,38 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
             return;
         }
         UnicastSubject<Observable<T>> subject = UnicastSubject.<Observable<T>> create();
-        
+
         final AsyncOuterManager<S, T> outerProducer = new AsyncOuterManager<S, T>(this, state, subject);
-        
+
         Subscriber<T> concatSubscriber = new Subscriber<T>() {
             @Override
             public void onNext(T t) {
                 actualSubscriber.onNext(t);
             }
-            
+
             @Override
             public void onError(Throwable e) {
                 actualSubscriber.onError(e);
             }
-            
+
             @Override
             public void onCompleted() {
                 actualSubscriber.onCompleted();
             }
-            
+
             @Override
             public void setProducer(Producer p) {
                 outerProducer.setConcatProducer(p);
             }
         };
-        
+
         subject.onBackpressureBuffer().concatMap(new Func1<Observable<T>, Observable<T>>() {
             @Override
             public Observable<T> call(Observable<T> v) {
                 return v.onBackpressureBuffer();
             }
         }).unsafeSubscribe(concatSubscriber);
-        
+
         actualSubscriber.add(concatSubscriber);
         actualSubscriber.add(outerProducer);
         actualSubscriber.setProducer(outerProducer);
@@ -349,9 +360,7 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
 
     static final class AsyncOuterManager<S, T> implements Producer, Subscription, Observer<Observable<? extends T>> {
 
-        private volatile int isUnsubscribed;
-        @SuppressWarnings("rawtypes")
-        private static final AtomicIntegerFieldUpdater<AsyncOuterManager> IS_UNSUBSCRIBED = AtomicIntegerFieldUpdater.newUpdater(AsyncOuterManager.class, "isUnsubscribed");
+        final AtomicBoolean isUnsubscribed;
 
         private final AsyncOnSubscribe<S, T> parent;
         private final SerializedObserver<Observable<? extends T>> serializedSubscriber;
@@ -363,11 +372,11 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
         private S state;
 
         private final UnicastSubject<Observable<T>> merger;
-        
+
         boolean emitting;
         List<Long> requests;
         Producer concatProducer;
-        
+
         long expectedDelivery;
 
         public AsyncOuterManager(AsyncOnSubscribe<S, T> parent, S initialState, UnicastSubject<Observable<T>> merger) {
@@ -375,11 +384,12 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
             this.serializedSubscriber = new SerializedObserver<Observable<? extends T>>(this);
             this.state = initialState;
             this.merger = merger;
+            this.isUnsubscribed = new AtomicBoolean();
         }
 
         @Override
         public void unsubscribe() {
-            if (IS_UNSUBSCRIBED.compareAndSet(this, 0, 1)) {
+            if (isUnsubscribed.compareAndSet(false, true)) {
                 synchronized (this) {
                     if (emitting) {
                         requests = new ArrayList<Long>();
@@ -398,16 +408,16 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
             }
             concatProducer = p;
         }
-        
+
         @Override
         public boolean isUnsubscribed() {
-            return isUnsubscribed != 0;
+            return isUnsubscribed.get();
         }
 
         public void nextIteration(long requestCount) {
             state = parent.next(state, requestCount, serializedSubscriber);
         }
-        
+
         void cleanup() {
             subscriptions.unsubscribe();
             try {
@@ -434,19 +444,19 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
                         requests = q;
                     }
                     q.add(n);
-                    
-                    quit = true; 
+
+                    quit = true;
                 } else {
                     emitting = true;
                 }
             }
-            
+
             concatProducer.request(n);
-            
+
             if (quit) {
                 return;
             }
-            
+
             if (tryEmit(n)) {
                 return;
             }
@@ -460,7 +470,7 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
                     }
                     requests = null;
                 }
-                
+
                 for (long r : q) {
                     if (tryEmit(r)) {
                         return;
@@ -489,12 +499,12 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
                         requests = q;
                     }
                     q.add(n);
-                    
+
                     return;
                 }
                 emitting = true;
             }
-            
+
             if (tryEmit(n)) {
                 return;
             }
@@ -508,7 +518,7 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
                     }
                     requests = null;
                 }
-                
+
                 for (long r : q) {
                     if (tryEmit(r)) {
                         return;
@@ -522,12 +532,12 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
                 cleanup();
                 return true;
             }
-            
+
             try {
                 onNextCalled = false;
                 expectedDelivery = n;
                 nextIteration(n);
-                
+
                 if (hasTerminated || isUnsubscribed()) {
                     cleanup();
                     return true;
@@ -545,7 +555,7 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
 
         private void handleThrownError(Throwable ex) {
             if (hasTerminated) {
-                RxJavaPlugins.getInstance().getErrorHandler().handleError(ex);
+                RxJavaHooks.onError(ex);
             } else {
                 hasTerminated = true;
                 merger.onError(ex);
@@ -577,11 +587,13 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
                 throw new IllegalStateException("onNext called multiple times!");
             }
             onNextCalled = true;
-            if (hasTerminated)
+            if (hasTerminated) {
                 return;
+            }
             subscribeBufferToObservable(t);
         }
 
+        @SuppressWarnings("unchecked")
         private void subscribeBufferToObservable(final Observable<? extends T> t) {
             final BufferUntilSubscriber<T> buffer = BufferUntilSubscriber.<T> create();
 
@@ -608,23 +620,24 @@ public abstract class AsyncOnSubscribe<S, T> implements OnSubscribe<T> {
             };
             subscriptions.add(s);
 
-            t.doOnTerminate(new Action0() {
+            Observable<? extends T> doOnTerminate = t.doOnTerminate(new Action0() {
                     @Override
                     public void call() {
                         subscriptions.remove(s);
-                    }})
-                .subscribe(s);
+                    }});
+
+            ((Observable<T>)doOnTerminate).subscribe(s);
 
             merger.onNext(buffer);
         }
     }
 
     static final class UnicastSubject<T> extends Observable<T>implements Observer<T> {
+        private final State<T> state;
+
         public static <T> UnicastSubject<T> create() {
             return new UnicastSubject<T>(new State<T>());
         }
-
-        private State<T> state;
 
         protected UnicastSubject(final State<T> state) {
             super(state);

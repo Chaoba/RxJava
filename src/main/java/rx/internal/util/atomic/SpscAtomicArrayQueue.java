@@ -10,7 +10,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- * 
+ *
  * Original License: https://github.com/JCTools/JCTools/blob/master/LICENSE
  * Original location: https://github.com/JCTools/JCTools/blob/master/jctools-core/src/main/java/org/jctools/queues/atomic/SpscAtomicArrayQueue.java
  */
@@ -29,13 +29,13 @@ import java.util.concurrent.atomic.*;
  * <i>2010 - Pisa - SPSC Queues on Shared Cache Multi-Core Systems.pdf<br>
  * 2012 - Junchang- BQueue- Efficient and Practical Queuing.pdf <br>
  * </i> This implementation is wait free.
- * 
+ *
  * @param <E>
  */
 public final class SpscAtomicArrayQueue<E> extends AtomicReferenceArrayQueue<E> {
     private static final Integer MAX_LOOK_AHEAD_STEP = Integer.getInteger("jctools.spsc.max.lookahead.step", 4096);
     final AtomicLong producerIndex;
-    protected long producerLookAhead;
+    long producerLookAhead;
     final AtomicLong consumerIndex;
     final int lookAheadStep;
     public SpscAtomicArrayQueue(int capacity) {
@@ -64,8 +64,8 @@ public final class SpscAtomicArrayQueue<E> extends AtomicReferenceArrayQueue<E> 
                 return false;
             }
         }
-        soProducerIndex(index + 1); // ordered store -> atomic and ordered for size()
         soElement(buffer, offset, e); // StoreStore
+        soProducerIndex(index + 1); // ordered store -> atomic and ordered for size()
         return true;
     }
 
@@ -79,8 +79,8 @@ public final class SpscAtomicArrayQueue<E> extends AtomicReferenceArrayQueue<E> 
         if (null == e) {
             return null;
         }
-        soConsumerIndex(index + 1); // ordered store -> atomic and ordered for size()
         soElement(lElementBuffer, offset, null);// StoreStore
+        soConsumerIndex(index + 1); // ordered store -> atomic and ordered for size()
         return e;
     }
 
@@ -107,6 +107,11 @@ public final class SpscAtomicArrayQueue<E> extends AtomicReferenceArrayQueue<E> 
         }
     }
 
+    @Override
+    public boolean isEmpty() {
+        return lvProducerIndex() == lvConsumerIndex();
+    }
+
     private void soProducerIndex(long newIndex) {
         producerIndex.lazySet(newIndex);
     }
@@ -114,7 +119,7 @@ public final class SpscAtomicArrayQueue<E> extends AtomicReferenceArrayQueue<E> 
     private void soConsumerIndex(long newIndex) {
         consumerIndex.lazySet(newIndex);
     }
-    
+
     private long lvConsumerIndex() {
         return consumerIndex.get();
     }

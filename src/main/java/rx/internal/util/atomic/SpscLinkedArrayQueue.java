@@ -23,30 +23,27 @@ import rx.internal.util.unsafe.Pow2;
 
 
 /*
- * The code was inspired by the similarly named JCTools class: 
+ * The code was inspired by the similarly named JCTools class:
  * https://github.com/JCTools/JCTools/blob/master/jctools-core/src/main/java/org/jctools/queues/atomic
  */
 
 /**
  * A single-producer single-consumer array-backed queue which can allocate new arrays in case the consumer is slower
  * than the producer.
+ *
+ * @param <T> the element type, not null
  */
 public final class SpscLinkedArrayQueue<T> implements Queue<T> {
     static final int MAX_LOOK_AHEAD_STEP = Integer.getInteger("jctools.spsc.max.lookahead.step", 4096);
-    protected volatile long producerIndex;
-    @SuppressWarnings("rawtypes")
-    static final AtomicLongFieldUpdater<SpscLinkedArrayQueue> PRODUCER_INDEX =
-            AtomicLongFieldUpdater.newUpdater(SpscLinkedArrayQueue.class, "producerIndex");
-    protected int producerLookAheadStep;
-    protected long producerLookAhead;
-    protected int producerMask;
-    protected AtomicReferenceArray<Object> producerBuffer;
-    protected int consumerMask;
-    protected AtomicReferenceArray<Object> consumerBuffer;
-    protected volatile long consumerIndex;
-    @SuppressWarnings("rawtypes")
-    static final AtomicLongFieldUpdater<SpscLinkedArrayQueue> CONSUMER_INDEX =
-            AtomicLongFieldUpdater.newUpdater(SpscLinkedArrayQueue.class, "consumerIndex");
+    final AtomicLong producerIndex;
+    int producerLookAheadStep;
+    long producerLookAhead;
+    int producerMask;
+    AtomicReferenceArray<Object> producerBuffer;
+    int consumerMask;
+    AtomicReferenceArray<Object> consumerBuffer;
+    final AtomicLong consumerIndex;
+
     private static final Object HAS_NEXT = new Object();
 
     public SpscLinkedArrayQueue(final int bufferSize) {
@@ -59,7 +56,8 @@ public final class SpscLinkedArrayQueue<T> implements Queue<T> {
         consumerBuffer = buffer;
         consumerMask = mask;
         producerLookAhead = mask - 1; // we know it's all empty to start with
-        soProducerIndex(0L);
+        producerIndex = new AtomicLong();
+        consumerIndex = new AtomicLong();
     }
 
     /**
@@ -68,7 +66,7 @@ public final class SpscLinkedArrayQueue<T> implements Queue<T> {
      * This implementation is correct for single producer thread use only.
      */
     @Override
-    public final boolean offer(final T e) {
+    public boolean offer(final T e) {
         // local load of field to avoid repeated loads after volatile reads
         final AtomicReferenceArray<Object> buffer = producerBuffer;
         final long index = lpProducerIndex();
@@ -93,8 +91,8 @@ public final class SpscLinkedArrayQueue<T> implements Queue<T> {
     }
 
     private boolean writeToQueue(final AtomicReferenceArray<Object> buffer, final T e, final long index, final int offset) {
-        soProducerIndex(index + 1);// this ensures atomic write of long on 32bit platforms
         soElement(buffer, offset, e);// StoreStore
+        soProducerIndex(index + 1);// this ensures atomic write of long on 32bit platforms
         return true;
     }
 
@@ -104,11 +102,11 @@ public final class SpscLinkedArrayQueue<T> implements Queue<T> {
         final AtomicReferenceArray<Object> newBuffer = new AtomicReferenceArray<Object>(capacity);
         producerBuffer = newBuffer;
         producerLookAhead = currIndex + mask - 1;
-        soProducerIndex(currIndex + 1);// this ensures correctness on 32bit platforms
         soElement(newBuffer, offset, e);// StoreStore
         soNext(oldBuffer, newBuffer);
         soElement(oldBuffer, offset, HAS_NEXT); // new buffer is visible after element is
                                                                  // inserted
+        soProducerIndex(currIndex + 1);// this ensures correctness on 32bit platforms
     }
 
     private void soNext(AtomicReferenceArray<Object> curr, AtomicReferenceArray<Object> next) {
@@ -125,7 +123,7 @@ public final class SpscLinkedArrayQueue<T> implements Queue<T> {
      */
     @SuppressWarnings("unchecked")
     @Override
-    public final T poll() {
+    public T poll() {
         // local load of field to avoid repeated loads after volatile reads
         final AtomicReferenceArray<Object> buffer = consumerBuffer;
         final long index = lpConsumerIndex();
@@ -134,8 +132,8 @@ public final class SpscLinkedArrayQueue<T> implements Queue<T> {
         final Object e = lvElement(buffer, offset);// LoadLoad
         boolean isNextBuffer = e == HAS_NEXT;
         if (null != e && !isNextBuffer) {
-            soConsumerIndex(index + 1);// this ensures correctness on 32bit platforms
             soElement(buffer, offset, null);// StoreStore
+            soConsumerIndex(index + 1);// this ensures correctness on 32bit platforms
             return (T) e;
         } else if (isNextBuffer) {
             return newBufferPoll(lvNext(buffer), index, mask);
@@ -152,8 +150,8 @@ public final class SpscLinkedArrayQueue<T> implements Queue<T> {
         if (null == n) {
             return null;
         } else {
-            soConsumerIndex(index + 1);// this ensures correctness on 32bit platforms
             soElement(nextBuffer, offsetInNew, null);// StoreStore
+            soConsumerIndex(index + 1);// this ensures correctness on 32bit platforms
             return n;
         }
     }
@@ -165,7 +163,7 @@ public final class SpscLinkedArrayQueue<T> implements Queue<T> {
      */
     @SuppressWarnings("unchecked")
     @Override
-    public final T peek() {
+    public T peek() {
         final AtomicReferenceArray<Object> buffer = consumerBuffer;
         final long index = lpConsumerIndex();
         final int mask = consumerMask;
@@ -177,10 +175,10 @@ public final class SpscLinkedArrayQueue<T> implements Queue<T> {
 
         return (T) e;
     }
-    
+
     @Override
     public void clear() {
-        while (poll() != null || !isEmpty());
+        while (poll() != null || !isEmpty()); // NOPMD
     }
 
     @SuppressWarnings("unchecked")
@@ -191,7 +189,7 @@ public final class SpscLinkedArrayQueue<T> implements Queue<T> {
     }
 
     @Override
-    public final int size() {
+    public int size() {
         /*
          * It is possible for a thread to be interrupted or reschedule between the read of the producer and
          * consumer indices, therefore protection is required to ensure size is within valid range. In the
@@ -208,7 +206,7 @@ public final class SpscLinkedArrayQueue<T> implements Queue<T> {
             }
         }
     }
-    
+
     @Override
     public boolean isEmpty() {
         return lvProducerIndex() == lvConsumerIndex();
@@ -219,27 +217,27 @@ public final class SpscLinkedArrayQueue<T> implements Queue<T> {
     }
 
     private long lvProducerIndex() {
-        return producerIndex;
+        return producerIndex.get();
     }
 
     private long lvConsumerIndex() {
-        return consumerIndex;
+        return consumerIndex.get();
     }
 
     private long lpProducerIndex() {
-        return producerIndex;
+        return producerIndex.get();
     }
 
     private long lpConsumerIndex() {
-        return consumerIndex;
+        return consumerIndex.get();
     }
 
     private void soProducerIndex(long v) {
-        PRODUCER_INDEX.lazySet(this, v);
+        producerIndex.lazySet(v);
     }
 
     private void soConsumerIndex(long v) {
-        CONSUMER_INDEX.lazySet(this, v);
+        consumerIndex.lazySet(v);
     }
 
     private static int calcWrappedOffset(long index, int mask) {
@@ -257,7 +255,7 @@ public final class SpscLinkedArrayQueue<T> implements Queue<T> {
     }
 
     @Override
-    public final Iterator<T> iterator() {
+    public Iterator<T> iterator() {
         throw new UnsupportedOperationException();
     }
 
@@ -315,39 +313,39 @@ public final class SpscLinkedArrayQueue<T> implements Queue<T> {
     public T element() {
         throw new UnsupportedOperationException();
     }
-    
+
     /**
-     * Offer two elements at the same time.
+     * Atomically offer two elements.
      * <p>Don't use the regular offer() with this at all!
-     * @param first
-     * @param second
-     * @return
+     * @param first the first value
+     * @param second the second value
+     * @return always true
      */
     public boolean offer(T first, T second) {
         final AtomicReferenceArray<Object> buffer = producerBuffer;
-        final long p = producerIndex;
+        final long p = lvProducerIndex();
         final int m = producerMask;
-        
+
         int pi = calcWrappedOffset(p + 2, m);
-        
+
         if (null == lvElement(buffer, pi)) {
             pi = calcWrappedOffset(p, m);
             soElement(buffer, pi + 1, second);
-            soProducerIndex(p + 2);
             soElement(buffer, pi, first);
+            soProducerIndex(p + 2);
         } else {
             final int capacity = buffer.length();
             final AtomicReferenceArray<Object> newBuffer = new AtomicReferenceArray<Object>(capacity);
             producerBuffer = newBuffer;
-            
+
             pi = calcWrappedOffset(p, m);
             soElement(newBuffer, pi + 1, second);// StoreStore
             soElement(newBuffer, pi, first);
             soNext(buffer, newBuffer);
-            
-            soProducerIndex(p + 2);// this ensures correctness on 32bit platforms
-            
+
             soElement(buffer, pi, HAS_NEXT); // new buffer is visible after element is
+
+            soProducerIndex(p + 2);// this ensures correctness on 32bit platforms
         }
 
         return true;
